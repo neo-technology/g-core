@@ -25,9 +25,8 @@ object GcoreRunner {
     val compiler: Compiler = GcoreCompiler(CompileContext(catalog, spark.newSession()))
     compiler.compile(
       """
-        | CONSTRUCT (x GROUP p.employer)-(p {newProp := p.name}), (c)
-        | MATCH (c:Company)<-[e]-(p:Person)
-        | WHERE c.name = p.employer
+        | CONSTRUCT ()
+        | MATCH (c1)->(c2:Cat)->(f) ON dummy_graph
       """.stripMargin)
   }
 }

@@ -76,6 +76,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
             val vertexAndEdgeData: DataFrame =
               edgeConstructTable.bindingTable.asInstanceOf[SqlBindingTableMetadata]
                 .solveBtableOps(sparkSession)
+            vertexAndEdgeData.show()
             vertexAndEdgeData
         }
       }
