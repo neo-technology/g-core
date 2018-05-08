@@ -56,43 +56,21 @@ object MatchesToAlgebra extends BottomUpRewriter[AlgebraTreeNode] {
       ec
   }
 
-  private type BindingToRelations = mutable.HashMap[Reference, mutable.Set[RelationLike]]
-    with mutable.MultiMap[Reference, RelationLike]
-  private type BsetToBindings = mutable.HashMap[Set[Reference], mutable.Set[RelationLike]]
+  private type RefToRelationsMmap = mutable.HashMap[Set[Reference], mutable.Set[RelationLike]]
     with mutable.MultiMap[Set[Reference], RelationLike]
+
+  private def newRefToRelationsMmap: RefToRelationsMmap =
+    new mutable.HashMap[Set[Reference], mutable.Set[RelationLike]]
+      with mutable.MultiMap[Set[Reference], RelationLike]
 
   /** Creates a [[UnionAll]] of the [[RelationLike]]s with the same [[BindingSet]]. */
   private def unionSimpleMatchRelations(relations: Seq[SimpleMatchRelation]): Seq[RelationLike] = {
-    val relationToBindingMmap: BsetToBindings =
-      new mutable.HashMap[Set[Reference], mutable.Set[RelationLike]]
-        with mutable.MultiMap[Set[Reference], RelationLike]
-
-    // Find those SimpleMatches that share the binding set - this will be either the binding of a
-    // vertex, or the three-set for an edge (from, edge, to).
-    relations.foreach(relation => {
-      val bset: Set[Reference] = relation.getBindingSet.refSet
-      relationToBindingMmap.addBinding(bset, relation)
-    })
-
-    // For binding sets that share at least two SimpleMatches, replace their relations with the
-    // union of them.
-    relationToBindingMmap
-      .filter(kv => {
-        val relations: mutable.Set[RelationLike] = kv._2
-        relations.size >= 2
-      })
-      .foreach(kv => {
-        val bindingSet: Set[Reference] = kv._1
-        val relations: mutable.Set[RelationLike] = kv._2
-
-        val unionAll: RelationLike = reduceLeft(relations.toSeq, UnionAll)
-        relationToBindingMmap.remove(bindingSet)
-        relationToBindingMmap.addBinding(bindingSet, unionAll)
-      })
-
-    // Return all relations that remain in the map. Now each binding set will correspond to exactly
-    // one relation in the map.
-    relationToBindingMmap.values.flatten.toSeq
+    relations
+      .groupBy(_.getBindingSet.refSet)
+      .map {
+        case (_, relationsToUnion) => reduceLeft(relationsToUnion, UnionAll)
+      }
+      .toSeq
   }
 
   /**
@@ -100,61 +78,65 @@ object MatchesToAlgebra extends BottomUpRewriter[AlgebraTreeNode] {
     * with disjoint [[BindingSet]]s.
     */
   private def joinSimpleMatchRelations(relations: Seq[RelationLike]): RelationLike = {
-    val bindingToRelationMmap: BindingToRelations =
-      new mutable.HashMap[Reference, mutable.Set[RelationLike]]
-        with mutable.MultiMap[Reference, RelationLike]
+    val refToRelationsMmap: RefToRelationsMmap = newRefToRelationsMmap
+    relations.foreach(relation =>
+      refToRelationsMmap.addBinding(relation.getBindingSet.refSet, relation))
+    val mmapedRelations: RefToRelationsMmap = joinSimpleMatchRelations(refToRelationsMmap)
 
-    relations.foreach(relation => {
-      val bset: Set[Reference] = relation.getBindingSet.refSet
-      bset.foreach(ref => bindingToRelationMmap.addBinding(ref, relation))
-    })
-
-    joinSimpleMatchRelations(bindingToRelationMmap)
+    reduceLeft(
+      relations =
+        mmapedRelations.map {
+          case (_, relationsToJoin) => reduceLeft(relationsToJoin.toSeq, InnerJoin)
+        }.toSeq,
+      binaryOp = CrossJoin)
   }
 
-  private def joinSimpleMatchRelations(bindingToRelationMmap: BindingToRelations)
-  : RelationLike = {
-    // The first binding that appears in more than one relation.
-    val commonBindingOption: Option[(Reference, mutable.Set[RelationLike])] =
-      bindingToRelationMmap.find(bindingToRelationSet => {
-        bindingToRelationSet._2.size >= 2
-      })
+  private def joinSimpleMatchRelations(refToRelationsMmap: RefToRelationsMmap)
+  : RefToRelationsMmap = {
+    val accumulator: RefToRelationsMmap = newRefToRelationsMmap
+    val changed: Boolean = joinSimpleMatchRelations(accumulator, refToRelationsMmap)
 
-    if (commonBindingOption.isDefined) {
-      // Extract a binding from the multimap that appears in more than one relation.
-      val multiBinding: (Reference, mutable.Set[RelationLike]) = commonBindingOption.get
+    if (changed)
+      joinSimpleMatchRelations(accumulator)
+    else
+      accumulator
+  }
 
-      // Do a natural join over relations that share the variable.
-      val joinedRelations = multiBinding._2.toSeq
-      val join: RelationLike = reduceLeft(joinedRelations, InnerJoin)
+  private def joinSimpleMatchRelations(accumulator: RefToRelationsMmap,
+                                       refToRelationMmap: RefToRelationsMmap): Boolean = {
+    var changed: Boolean = false
 
-      // For each binding in the join, remove previous relations it appeared in and are now part of
-      // the joined relations, and add the join result to its mmap set.
-      join.asInstanceOf[JoinLike].getBindingSet.refSet.foreach(
-        ref => {
-          joinedRelations.foreach(
-            // If this binding appeared in this relation, remove the relation from the mmap.
-            // Otherwise, the operation does not have any effect on the mmap.
-            relation => bindingToRelationMmap.removeBinding(ref, relation)
-          )
+    refToRelationMmap.foreach {
+      case mmapTuple @ (refSet, relations) =>
+        // Find the first key-value tuple in the accumulator for which the Reference set and the
+        // mmap Reference set are non-disjoint. This means they have at least one variable in
+        // common and should be joined.
+        val nonDisjointTuple: Option[(Set[Reference], mutable.Set[RelationLike])] =
+          accumulator.collectFirst {
+            case accTuple @ (accRefSet, _) if (accRefSet intersect refSet).nonEmpty => accTuple
+          }
 
-          bindingToRelationMmap.addBinding(ref, join)
+        if (nonDisjointTuple.isDefined) {
+          val accRefSet: Set[Reference] = nonDisjointTuple.get._1
+          val accRelations: mutable.Set[RelationLike] = nonDisjointTuple.get._2
+
+          // Remove previous occurrence of the key (set of References).
+          accumulator -= accRefSet
+          // Add a new key-value pair, where the key is the set union between the mmap Reference set
+          // and the accumulator Reference set and the value is the set union of the mmap relation
+          // set and the accumulator relation set.
+          accumulator += ((accRefSet union refSet) -> (relations union accRelations))
+
+          // A key-value pair in the accumulator has changed.
+          changed = true
+        } else {
+          // There was no key-value pair in the accumulator with a non-disjoint Reference set to
+          // this one in the mmap. We add the current tuple to the accumulator.
+          accumulator += mmapTuple
         }
-      )
-
-      // Call joinSimpleMatchRelations recursively,
-      joinSimpleMatchRelations(bindingToRelationMmap)
-
-    } else {
-      // Every binding now has only one relation it appears in. The result is the cross-join of all
-      // unique relations in the multimap.
-      reduceLeft(
-        relations =
-          bindingToRelationMmap.foldLeft(Set.empty[RelationLike]) {
-            (agg, bindingToRels) => agg.union(bindingToRels._2)
-          }.toSeq,
-        binaryOp = CrossJoin)
     }
+
+    changed
   }
 
   override val rule: RewriteFuncType = matchClause orElse condMatchClause orElse existsClause
