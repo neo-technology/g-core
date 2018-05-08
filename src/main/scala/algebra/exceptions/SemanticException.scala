@@ -1,8 +1,7 @@
 package algebra.exceptions
 
-import algebra.expressions.{Exists, Label, PropertyKey, Reference}
-import algebra.operators.CrossJoin
-import algebra.types.{ConnectionConstruct, DefaultGraph, DoubleEndpointConn, NamedGraph}
+import algebra.expressions.{Exists, Label, PropertyKey}
+import algebra.types.{DefaultGraph, DoubleEndpointConn, NamedGraph}
 import schema.EntitySchema
 
 /** A class of exceptions that signals a semantic error within the query. */
@@ -59,26 +58,3 @@ case class PropKeysException(graphName: String,
     s"The following property keys are mis-associated with their entity in graph $graphName: " +
       s"${unavailableProps.map(_.key).mkString(", ")}.\n " +
       s"Entity schema is:\n$schema")
-
-/**
-  * Two relations can only be joined if they contain at least one common binding. This is not an
-  * exception thrown due to an invalid query, but rather due to errors in the rewriting stages. The
-  * rule applies to all available joins in the algebra, except for the [[CrossJoin]].
-  */
-case class JoinException(lhsBset: Set[Reference], rhsBset: Set[Reference])
-  extends SemanticException(
-    s"Cannot join relations with no common attributes. Left attributes are: $lhsBset, right " +
-      s"attributes are $rhsBset")
-
-/**
-  * Two relations can only be [[CrossJoin]]ed (cartesian product) if they share no common bindings.
-  * Otherwise any other type of join should be used, depending on the semantics. This is not an
-  * exception thrown due to an invalid query, but rather due to errors in the rewriting stages.
-  */
-case class CrossJoinException(lhsBset: Set[Reference], rhsBset: Set[Reference])
-  extends SemanticException(
-    s"Cannot cross-join relations with common attributes. Left attributes are: $lhsBset, right " +
-      s"attributes are $rhsBset")
-
-/** Ambiguous features of two [[ConnectionConstruct]]s to be merged. */
-case class AmbiguousMerge(reason: String) extends SemanticException(reason)

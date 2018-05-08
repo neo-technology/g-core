@@ -26,7 +26,7 @@ object GcoreRunner {
     compiler.compile(
       """
         | CONSTRUCT ()
-        | MATCH (c1)->(c2:Cat)->(f) ON dummy_graph
+        | MATCH (c1)->(c2:Cat)->(c3) ON dummy_graph
       """.stripMargin)
   }
 }
