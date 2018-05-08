@@ -54,6 +54,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
         // CONSTRUCT (c) WHEN c.prop > 3, (c)-... WHEN c.prop <= 3 ...
         // In this case, the resulting baseConstructTable will be the empty DataFrame. We should
         // return here the empty DF as well. No other operations on this table will make sense.
+        logger.info("The base construct table was empty, cannot build edge table.")
         sparkSession.emptyDataFrame
       } else {
         // Rewrite the vertex table.
@@ -76,6 +77,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
             val vertexAndEdgeData: DataFrame =
               edgeConstructTable.bindingTable.asInstanceOf[SqlBindingTableMetadata]
                 .solveBtableOps(sparkSession)
+            vertexAndEdgeData.show()
             vertexAndEdgeData
         }
       }
