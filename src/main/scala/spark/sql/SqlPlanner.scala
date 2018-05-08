@@ -5,6 +5,7 @@ import algebra.target_api._
 import algebra.trees.{AlgebraToTargetTree, AlgebraTreeNode}
 import algebra.types.Graph
 import algebra.{target_api => target}
+import common.RandomNameGenerator.randomString
 import compiler.CompileContext
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.slf4j.{Logger, LoggerFactory}
@@ -12,8 +13,14 @@ import schema.Catalog
 import spark.sql.operators._
 import spark.sql.{operators => sql}
 
+object SqlPlanner {
+  val GROUP_CONSTRUCT_VIEW_PREFIX: String = "GroupConstruct"
+}
+
 /** Creates a physical plan with textual SQL queries. */
 case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
+
+  import spark.sql.SqlPlanner.GROUP_CONSTRUCT_VIEW_PREFIX
 
   override type StorageType = DataFrame
 
@@ -22,11 +29,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
   val logger: Logger = LoggerFactory.getLogger(getClass.getName)
 
   override def solveBindingTable(matchClause: AlgebraTreeNode): DataFrame = {
-    val sparkTree: TargetTreeNode = rewriter.rewriteTree(matchClause).asInstanceOf[TargetTreeNode]
-    logger.info("\n{}", sparkTree.treeString())
-    val btable: SqlBindingTableMetadata =
-      sparkTree.bindingTable.asInstanceOf[SqlBindingTableMetadata]
-    btable.solveBtableOps(sparkSession)
+    rewriteAndSolveBtableOps(matchClause)
   }
 
   // TODO: This method needs to return a PathPropertyGraph, built from the currently returned
@@ -37,16 +40,12 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     btable.createOrReplaceGlobalTempView(algebra.trees.BasicToGroupConstruct.BTABLE_VIEW)
     // The root of each tree is a GroupConstruct.
 
-    constructClauses.map(constructClause => {
+    constructClauses.flatMap(constructClause => {
       val groupConstruct: GroupConstruct = constructClause.asInstanceOf[GroupConstruct]
 
       // Rewrite the filtered binding table and register it as a global view.
-      val baseConstructTable: TargetTreeNode =
-        rewriter.rewriteTree(groupConstruct.getBaseConstructTable).asInstanceOf[TargetTreeNode]
-      logger.info("\n{}", baseConstructTable.treeString())
       val baseConstructTableData: DataFrame =
-        baseConstructTable.bindingTable.asInstanceOf[SqlBindingTableMetadata]
-          .solveBtableOps(sparkSession)
+        rewriteAndSolveBtableOps(groupConstruct.getBaseConstructTable)
       baseConstructTableData.createOrReplaceGlobalTempView(groupConstruct.baseConstructViewName)
 
       if (baseConstructTableData.rdd.isEmpty()) {
@@ -55,33 +54,47 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
         // In this case, the resulting baseConstructTable will be the empty DataFrame. We should
         // return here the empty DF as well. No other operations on this table will make sense.
         logger.info("The base construct table was empty, cannot build edge table.")
-        sparkSession.emptyDataFrame
+        Seq(sparkSession.emptyDataFrame)
       } else {
         // Rewrite the vertex table.
-        val vertexConstructTable: TargetTreeNode =
-          rewriter.rewriteTree(groupConstruct.getVertexConstructTable).asInstanceOf[TargetTreeNode]
-        logger.info("\n{}", vertexConstructTable.treeString())
-        val vertexData: DataFrame =
-          vertexConstructTable.bindingTable.asInstanceOf[SqlBindingTableMetadata]
-            .solveBtableOps(sparkSession)
+        val vertexData: DataFrame = rewriteAndSolveBtableOps(groupConstruct.getVertexConstructTable)
 
         // For the edge table, if it's not the empty relation, register the vertex table as a global
         // view and solve the query to create the edge table.
-        groupConstruct.getEdgeConstructTable match {
+        val constructData: DataFrame = groupConstruct.getEdgeConstructTable match {
           case RelationLike.empty => vertexData
           case relation @ _ =>
             vertexData.createOrReplaceGlobalTempView(groupConstruct.vertexConstructViewName)
-            val edgeConstructTable: TargetTreeNode =
-              rewriter.rewriteTree(relation).asInstanceOf[TargetTreeNode]
-            logger.info("\n{}", edgeConstructTable.treeString())
-            val vertexAndEdgeData: DataFrame =
-              edgeConstructTable.bindingTable.asInstanceOf[SqlBindingTableMetadata]
-                .solveBtableOps(sparkSession)
-            vertexAndEdgeData.show()
+            val vertexAndEdgeData: DataFrame = rewriteAndSolveBtableOps(relation)
             vertexAndEdgeData
         }
+
+        // Register the construct data of this GroupConstruct's as a global view.
+        val constructDataViewName: String = s"${GROUP_CONSTRUCT_VIEW_PREFIX}_${randomString()}"
+        constructData.createOrReplaceGlobalTempView(constructDataViewName)
+        val constructDataTableView: sql.TableView = TableView(constructDataViewName, sparkSession)
+        val vertexCreates: Seq[sql.VertexCreate] =
+          groupConstruct.createRules
+            .collect { case vertexCreate: target.VertexCreate => vertexCreate }
+            .map(createRule => sql.VertexCreate(constructDataTableView, createRule))
+        val vertexTables: Seq[DataFrame] = vertexCreates.map(solveBtableOps)
+        vertexTables
       }
     })
+  }
+
+  private def rewriteAndSolveBtableOps(relation: AlgebraTreeNode): DataFrame = {
+    val sqlRelation: TargetTreeNode = rewriter.rewriteTree(relation).asInstanceOf[TargetTreeNode]
+    logger.info("\n{}", sqlRelation.treeString())
+    solveBtableOps(sqlRelation)
+  }
+
+  private def solveBtableOps(relation: TargetTreeNode): DataFrame = {
+    val btableMetadata: SqlBindingTableMetadata =
+      relation.bindingTable.asInstanceOf[SqlBindingTableMetadata]
+    val data: DataFrame = btableMetadata.solveBtableOps(sparkSession)
+    data.show()
+    data
   }
 
   override def planVertexScan(vertexRelation: VertexRelation, graph: Graph, catalog: Catalog)

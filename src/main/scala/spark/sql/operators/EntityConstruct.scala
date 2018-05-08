@@ -45,8 +45,6 @@ case class EntityConstruct(reference: Reference,
     val newRefSchema: StructType =
       StructType(fieldsToSelect.toArray :+ constructIdColumnStructFields)
 
-    // TODO: If the label is missing, add it as a new column and create a random name for the label.
-
     val createQuery: String =
       s"""
       SELECT ROW_NUMBER() OVER (ORDER BY `$idColumnName`) AS `$constructIdColumnName`,
