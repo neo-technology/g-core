@@ -48,7 +48,7 @@ case class Project(relation: TargetTreeNode, attributes: Seq[Reference])
       val table: String = {
         if (newColumns.nonEmpty) {
           // For each new variable, we add a column containing monotonically increasing id's. We
-          // cannot simply add any constant here, because it will be coallesced into a single group
+          // cannot simply add any constant here, because it will be coalesced into a single group
           // by a GROUP BY clause. The monotonic id is actually one id per partition and, for each
           // row on that partition it increases by one. Therefore, in the resulting table, we may
           // see very skewed id's in the new columns. However, they should be distinct from each

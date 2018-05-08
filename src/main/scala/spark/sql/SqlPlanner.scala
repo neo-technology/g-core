@@ -69,7 +69,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
         // view and solve the query to create the edge table.
         groupConstruct.getEdgeConstructTable match {
           case RelationLike.empty => vertexData
-          case relation@_ =>
+          case relation @ _ =>
             vertexData.createOrReplaceGlobalTempView(groupConstruct.vertexConstructViewName)
             val edgeConstructTable: TargetTreeNode =
               rewriter.rewriteTree(relation).asInstanceOf[TargetTreeNode]
