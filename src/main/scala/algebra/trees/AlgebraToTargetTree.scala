@@ -34,18 +34,12 @@ case class AlgebraToTargetTree(catalog: Catalog, targetPlanner: TargetPlanner)
 
     case tableView: TableView => targetPlanner.createTableView(tableView.getViewName)
     case ec: ConstructRelation => targetPlanner.planConstruct(ec)
-    case groupConstruct: GroupConstruct =>
-      val targetCreateRules: Seq[EntityCreateRule] =
-        groupConstruct.createRules
-          .map {
-            case VertexCreate(reference, removeClause) =>
-              target.VertexCreate(reference, removeClause, Catalog.nextBaseEntityTableIndex)
-            case EdgeCreate(reference, leftReference, rightReference, connType, removeClause) =>
-              target.EdgeCreate(
-                reference, leftReference, rightReference, connType,
-                removeClause,
-                Catalog.nextBaseEntityTableIndex)
-          }
-      groupConstruct.copy(createRules = targetCreateRules)
+    case VertexCreate(reference, removeClause) =>
+      target.VertexCreate(reference, removeClause, Catalog.nextBaseEntityTableIndex)
+    case EdgeCreate(reference, leftReference, rightReference, connType, removeClause) =>
+      target.EdgeCreate(
+        reference, leftReference, rightReference, connType,
+        removeClause,
+        Catalog.nextBaseEntityTableIndex)
   }
 }

@@ -16,11 +16,8 @@ case class SqlRunner(compileContext: CompileContext) extends RunTargetCodeStage 
         val matchClause: AlgebraTreeNode = createGraph.matchClause
         val constructClauses: Seq[AlgebraTreeNode] = createGraph.constructClauses
 
-        val data: DataFrame = sparkSqlPlanner.solveBindingTable(matchClause)
-
-        data.show()
-
-        val graphData: Seq[DataFrame] = sparkSqlPlanner.constructGraph(data, constructClauses)
+        val matchData: DataFrame = sparkSqlPlanner.solveBindingTable(matchClause)
+        val graphData: Seq[DataFrame] = sparkSqlPlanner.constructGraph(matchData, constructClauses)
         graphData
 
       case _ =>

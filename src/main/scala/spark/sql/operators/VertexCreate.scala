@@ -14,21 +14,34 @@ case class VertexCreate(relation: TargetTreeNode, createRule: target_api.VertexC
 
   private val relationBtable: SqlBindingTableMetadata =
     relation.bindingTable.asInstanceOf[SqlBindingTableMetadata]
+
   private val reference: String = createRule.reference.refName
   private val idCol: String = s"$reference$$${idColumn.columnName}"
   private val constructIdCol: String = s"$reference$$${constructIdColumn.columnName}"
   private val labelCol: String = s"$reference$$${tableLabelColumn.columnName}"
 
+  private val idColStructField: StructField = StructField(idCol, IntegerType)
+
   override val bindingTable: BindingTableMetadata = {
     val existingFields: Map[StructField, SelectStr] = createExistingFieldsMap
     val newFields: Map[StructField, SelectStr] = createNewFieldsMap
     val removeFields: Set[StructField] = createRemoveFieldsSet(existingFields.keySet)
+
+    // Aggregate everything except for the id column, which will be the key of the group by.
     val fieldsToSelect: Map[StructField, SelectStr] = (existingFields -- removeFields) ++ newFields
-    val columnsToSelect: String = fieldsToSelect.values.mkString(", ")
+    val fieldsToAggregateStr: Seq[SelectStr] =
+      (fieldsToSelect - idColStructField)
+        .map {
+          case (structField, selectStr) => s"FIRST($selectStr) AS `${structField.name}`"
+        }
+        .toSeq
+    val columnsToSelect: String =
+      (fieldsToAggregateStr :+ fieldsToSelect(idColStructField)).mkString(", ")
 
     val createQuery: String =
       s"""
-      SELECT $columnsToSelect FROM (${relationBtable.btableOps.resQuery})"""
+      SELECT $columnsToSelect FROM (${relationBtable.btableOps.resQuery})
+      GROUP BY `$constructIdCol`"""
 
     val newRefSchema: StructType = StructType(fieldsToSelect.keys.toArray)
 
@@ -39,18 +52,18 @@ case class VertexCreate(relation: TargetTreeNode, createRule: target_api.VertexC
   }
 
   private def createExistingFieldsMap: Map[StructField, SelectStr] = {
-    relationBtable.btableSchema.fields
-      .map(field => field -> s"`${field.name}`")
-      .toMap
+    Map(
+      relationBtable.schemaMap(createRule.reference)
+        .fields
+        .map(field => field -> s"`${field.name}`"): _*)
   }
 
   private def createNewFieldsMap: Map[StructField, SelectStr] = {
     // We add the new id field, which is created based on the construct_id.
-    val idField: StructField = StructField(idCol, IntegerType)
     val idSelect: SelectStr = s"(${createRule.tableBaseIndex} + `$constructIdCol` - 1) AS `$idCol`"
 
     // TODO: If the label is missing, add it as a new column and create a random name for the label.
-    Map(idField -> idSelect)
+    Map(idColStructField -> idSelect)
   }
 
   private def createRemoveFieldsSet(existingFields: Set[StructField]): Set[StructField] = {
@@ -68,7 +81,7 @@ case class VertexCreate(relation: TargetTreeNode, createRule: target_api.VertexC
       }
     }
     existingFields.filter(field =>
-      // Remove the old id column and the construct id column.
+      // Remove the old id column and the construct id column, if they are present.
       field.name == idCol || field.name == constructIdCol ||
         // Remove all the properties and labels specified in the createRule.removeClause
         removeClauseColumns.contains(field.name)

@@ -28,9 +28,8 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
   val sparkSession: SparkSession = compileContext.sparkSession
   val logger: Logger = LoggerFactory.getLogger(getClass.getName)
 
-  override def solveBindingTable(matchClause: AlgebraTreeNode): DataFrame = {
+  override def solveBindingTable(matchClause: AlgebraTreeNode): DataFrame =
     rewriteAndSolveBtableOps(matchClause)
-  }
 
   // TODO: This method needs to return a PathPropertyGraph, built from the currently returned
   // sequence of DataFrames.
@@ -38,8 +37,8 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
                               constructClauses: Seq[AlgebraTreeNode]): Seq[DataFrame] = {
     // Register the resulting binding table as a view, so that each construct clause can reuse it.
     btable.createOrReplaceGlobalTempView(algebra.trees.BasicToGroupConstruct.BTABLE_VIEW)
-    // The root of each tree is a GroupConstruct.
 
+    // The root of each tree is a GroupConstruct.
     constructClauses.flatMap(constructClause => {
       val groupConstruct: GroupConstruct = constructClause.asInstanceOf[GroupConstruct]
 
@@ -50,7 +49,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
 
       if (baseConstructTableData.rdd.isEmpty()) {
         // It can happen that the GroupConstruct filters on contradictory predicates. Example:
-        // CONSTRUCT (c) WHEN c.prop > 3, (c)-... WHEN c.prop <= 3 ...
+        // CONSTRUCT (c) WHEN c.prop > 3, (c)-[]-... WHEN c.prop <= 3 ...
         // In this case, the resulting baseConstructTable will be the empty DataFrame. We should
         // return here the empty DF as well. No other operations on this table will make sense.
         logger.info("The base construct table was empty, cannot build edge table.")
@@ -73,8 +72,13 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
         val constructDataViewName: String = s"${GROUP_CONSTRUCT_VIEW_PREFIX}_${randomString()}"
         constructData.createOrReplaceGlobalTempView(constructDataViewName)
         val constructDataTableView: sql.TableView = TableView(constructDataViewName, sparkSession)
+
+        // Rewrite the CreateRules, and then construct each entity in turn.
+        val targetCreateRules: Seq[AlgebraTreeNode] =
+          groupConstruct.createRules.map(rule => rewriter.rewriteTree(rule))
+
         val vertexCreates: Seq[sql.VertexCreate] =
-          groupConstruct.createRules
+          targetCreateRules
             .collect { case vertexCreate: target.VertexCreate => vertexCreate }
             .map(createRule => sql.VertexCreate(constructDataTableView, createRule))
         val vertexTables: Seq[DataFrame] = vertexCreates.map(solveBtableOps)
@@ -84,14 +88,14 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
   }
 
   private def rewriteAndSolveBtableOps(relation: AlgebraTreeNode): DataFrame = {
-    val sqlRelation: TargetTreeNode = rewriter.rewriteTree(relation).asInstanceOf[TargetTreeNode]
-    logger.info("\n{}", sqlRelation.treeString())
+    val sqlRelation: AlgebraTreeNode = rewriter.rewriteTree(relation)
     solveBtableOps(sqlRelation)
   }
 
-  private def solveBtableOps(relation: TargetTreeNode): DataFrame = {
+  private def solveBtableOps(relation: AlgebraTreeNode): DataFrame = {
+    logger.info("\nSolving\n{}", relation.treeString())
     val btableMetadata: SqlBindingTableMetadata =
-      relation.bindingTable.asInstanceOf[SqlBindingTableMetadata]
+      relation.asInstanceOf[TargetTreeNode].bindingTable.asInstanceOf[SqlBindingTableMetadata]
     val data: DataFrame = btableMetadata.solveBtableOps(sparkSession)
     data.show()
     data
