@@ -1,5 +1,6 @@
 package spark.sql
 
+import algebra.expressions.Reference
 import algebra.operators._
 import algebra.target_api._
 import algebra.trees.{AlgebraToTargetTree, AlgebraTreeNode}
@@ -82,7 +83,23 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
             .collect { case vertexCreate: target.VertexCreate => vertexCreate }
             .map(createRule => sql.VertexCreate(constructDataTableView, createRule))
         val vertexTables: Seq[DataFrame] = vertexCreates.map(solveBtableOps)
-        vertexTables
+
+        val vertexCreateMap: Map[Reference, target.VertexCreate] =
+          vertexCreates
+            .map(vertexCreate => vertexCreate.createRule.reference -> vertexCreate.createRule)
+            .toMap
+        val edgeCreates: Seq[sql.EdgeCreate] =
+          targetCreateRules
+            .collect { case edgeCreate: target.EdgeCreate => edgeCreate }
+            .map(createRule =>
+              sql.EdgeCreate(
+                constructDataTableView,
+                createRule,
+                vertexCreateMap(createRule.leftReference),
+                vertexCreateMap(createRule.rightReference)))
+        val edgeTables: Seq[DataFrame] = edgeCreates.map(solveBtableOps)
+
+        vertexTables ++ edgeTables
       }
     })
   }
