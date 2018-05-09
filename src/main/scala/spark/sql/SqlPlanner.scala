@@ -2,6 +2,7 @@ package spark.sql
 
 import algebra.expressions.Reference
 import algebra.operators._
+import algebra.operators.Column.tableLabelColumn
 import algebra.target_api._
 import algebra.trees.{AlgebraToTargetTree, AlgebraTreeNode}
 import algebra.types.Graph
@@ -10,7 +11,7 @@ import common.RandomNameGenerator.randomString
 import compiler.CompileContext
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.slf4j.{Logger, LoggerFactory}
-import schema.Catalog
+import schema.{Catalog, Table}
 import spark.sql.operators._
 import spark.sql.{operators => sql}
 
@@ -104,20 +105,6 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     })
   }
 
-  private def rewriteAndSolveBtableOps(relation: AlgebraTreeNode): DataFrame = {
-    val sqlRelation: AlgebraTreeNode = rewriter.rewriteTree(relation)
-    solveBtableOps(sqlRelation)
-  }
-
-  private def solveBtableOps(relation: AlgebraTreeNode): DataFrame = {
-    logger.info("\nSolving\n{}", relation.treeString())
-    val btableMetadata: SqlBindingTableMetadata =
-      relation.asInstanceOf[TargetTreeNode].bindingTable.asInstanceOf[SqlBindingTableMetadata]
-    val data: DataFrame = btableMetadata.solveBtableOps(sparkSession)
-    data.show()
-    data
-  }
-
   override def planVertexScan(vertexRelation: VertexRelation, graph: Graph, catalog: Catalog)
   : target.VertexScan = sql.VertexScan(vertexRelation, graph, catalog)
 
@@ -178,5 +165,27 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
       expr = entityConstruct.expr,
       setClause = entityConstruct.setClause,
       removeClause = entityConstruct.propAggRemoveClause)
+  }
+
+  private def rewriteAndSolveBtableOps(relation: AlgebraTreeNode): DataFrame = {
+    val sqlRelation: AlgebraTreeNode = rewriter.rewriteTree(relation)
+    solveBtableOps(sqlRelation)
+  }
+
+  private def solveBtableOps(relation: AlgebraTreeNode): DataFrame = {
+    logger.info("\nSolving\n{}", relation.treeString())
+    val btableMetadata: SqlBindingTableMetadata =
+      relation.asInstanceOf[TargetTreeNode].bindingTable.asInstanceOf[SqlBindingTableMetadata]
+    val data: DataFrame = btableMetadata.solveBtableOps(sparkSession)
+    data.show()
+    data
+  }
+
+  private def createSchemaTable(data: DataFrame, reference: Reference): Table[DataFrame] = {
+    val labelColumnSelect: String = s"${reference.refName}$$${tableLabelColumn.columnName}"
+    val labelColumn: String = data.select(labelColumnSelect).first.getString(0)
+    val dataColumnsRenamed: DataFrame =
+      data
+        .drop(labelColumn)
   }
 }
