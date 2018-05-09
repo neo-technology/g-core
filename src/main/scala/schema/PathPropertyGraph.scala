@@ -22,12 +22,6 @@ abstract class PathPropertyGraph extends GraphSchema with GraphData {
       s"[*] Vertex schema:\n$vertexSchema" +
       s"[*] Edge schema:\n$edgeSchema" +
       s"[*] Path schema:\n$pathSchema"
-
-  def sparkSchemaString: String =
-    s"\nGraph: $graphName\n" +
-      s"[*] Vertex schema:\n$vertexData\n" +
-      s"[*] Edge schema:\n$edgeData\n" +
-      s"[*] Path schema:\n$pathData"
 }
 
 object PathPropertyGraph {
