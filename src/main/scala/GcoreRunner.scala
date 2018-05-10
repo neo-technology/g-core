@@ -27,7 +27,7 @@ object GcoreRunner {
 
     gcoreRunner.compiler.compile(
       """
-        | CONSTRUCT (x GROUP p.employer :XLabel)<-[e0 :e0Label]-(p :PLabel {newProp := p.name})
+        | CONSTRUCT (x GROUP p.employer :XLabel)<-[e0 :e0Label]-(p {newProp := p.name})
         | MATCH (c:Company)<-[e]-(p:Person)
       """.stripMargin)
   }

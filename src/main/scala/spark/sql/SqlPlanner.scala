@@ -36,8 +36,10 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
   val sparkSession: SparkSession = compileContext.sparkSession
   val logger: Logger = LoggerFactory.getLogger(getClass.getName)
 
-  override def solveBindingTable(matchClause: AlgebraTreeNode): DataFrame =
-    rewriteAndSolveBtableOps(matchClause)
+  override def solveBindingTable(matchClause: AlgebraTreeNode): DataFrame = {
+    val matchData: DataFrame = rewriteAndSolveBtableOps(matchClause)
+    matchData.cache()
+  }
 
   override def constructGraph(btable: DataFrame,
                               constructClauses: Seq[AlgebraTreeNode]): PathPropertyGraph = {
@@ -141,7 +143,8 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     val btableMetadata: SqlBindingTableMetadata =
       relation.asInstanceOf[TargetTreeNode].bindingTable.asInstanceOf[SqlBindingTableMetadata]
     val data: DataFrame = btableMetadata.solveBtableOps(sparkSession)
-    data.show()
+//    data.explain(true)
+//    data.show()
     data
   }
 
@@ -149,10 +152,9 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     // The root of each tree is a GroupConstruct.
     val groupConstruct: GroupConstruct = constructClause.asInstanceOf[GroupConstruct]
 
-    // Rewrite the filtered binding table and register it as a global view.
+    // Rewrite the filtered binding table and register it as a global view, if it is not empty.
     val baseConstructTableData: DataFrame =
       rewriteAndSolveBtableOps(groupConstruct.getBaseConstructTable)
-    baseConstructTableData.createOrReplaceGlobalTempView(groupConstruct.baseConstructViewName)
 
     if (baseConstructTableData.rdd.isEmpty()) {
       // It can happen that the GroupConstruct filters on contradictory predicates. Example:
@@ -166,6 +168,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
         edgeRestrictions = SchemaMap.empty)
     } else {
       // Rewrite the vertex table.
+      baseConstructTableData.createOrReplaceGlobalTempView(groupConstruct.baseConstructViewName)
       val vertexData: DataFrame = rewriteAndSolveBtableOps(groupConstruct.getVertexConstructTable)
 
       // For the edge table, if it's not the empty relation, register the vertex table as a global
@@ -263,7 +266,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     val labelColumnSelect: String = s"${reference.refName}$$${tableLabelColumn.columnName}"
     val labelColumn: String = data.select(labelColumnSelect).first.getString(0)
     val newDataColumnNames: Seq[String] =
-      data.columns.map(columnName => columnName.split(s"${reference.refName}$$")(0))
+      data.columns.map(columnName => columnName.split(s"${reference.refName}\\$$")(1))
     val dataColumnsRenamed: DataFrame = data.drop(labelColumn).toDF(newDataColumnNames: _*)
     Table[DataFrame](name = Label(labelColumn), data = dataColumnsRenamed)
   }
