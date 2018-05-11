@@ -40,19 +40,25 @@ case class EntityConstruct(reference: Reference,
 
     val idColumnName: String = s"${reference.refName}$$${idColumn.columnName}"
     val constructIdColumnName: String = s"${reference.refName}$$${constructIdColumn.columnName}"
-    val constructIdColumnStructFields: StructField = StructField(constructIdColumnName, IntegerType)
-
-    val newRefSchema: StructType =
-      StructType(fieldsToSelect.toArray :+ constructIdColumnStructFields)
+    val constructIdColumnStructField: StructField = StructField(constructIdColumnName, IntegerType)
 
     val createQuery: String =
       s"""
       SELECT ROW_NUMBER() OVER (ORDER BY `$idColumnName`) AS `$constructIdColumnName`,
       $columnsToSelect FROM (${relationBtable.btableOps.resQuery})"""
 
+    val newRefSchema: StructType =
+      StructType(
+        (fieldsToSelect + constructIdColumnStructField)
+          .filter(_.name.startsWith(reference.refName))
+          .toArray)
+    val newSchemaMap: Map[Reference, StructType] =
+      relationBtable.schemaMap ++ Map(reference -> newRefSchema)
+    val newBtableSchema: StructType = StructType(newSchemaMap.values.flatMap(_.fields).toArray)
+
     SqlBindingTableMetadata(
-      sparkSchemaMap = Map(reference -> newRefSchema),
-      sparkBtableSchema = newRefSchema,
+      sparkSchemaMap = newSchemaMap,
+      sparkBtableSchema = newBtableSchema,
       btableOps = SqlQuery(resQuery = createQuery))
   }
 
