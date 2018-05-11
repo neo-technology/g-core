@@ -3,8 +3,8 @@ package schema
 object Catalog {
   val empty: Catalog = new Catalog { override type StorageType = Nothing }
 
-  private val START_BASE_TABLE_INDEX = 1000000 // 1_000_000
-  private val TABLE_INDEX_INCREMENT = 100000 // 100_000
+  val START_BASE_TABLE_INDEX = 1000000 // 1_000_000
+  val TABLE_INDEX_INCREMENT = 100000 // 100_000
 
   private var baseEntityTableIndex: Int = START_BASE_TABLE_INDEX
 
@@ -14,6 +14,9 @@ object Catalog {
     baseEntityTableIndex += TABLE_INDEX_INCREMENT
     nextIndex
   }
+
+  // TODO: Should this be synchronized?
+  def resetBaseEntityTableIndex(): Unit = baseEntityTableIndex = START_BASE_TABLE_INDEX
 }
 
 /** Keeps track of all the [[PathPropertyGraph]]s available for querying. */

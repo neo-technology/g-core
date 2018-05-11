@@ -143,8 +143,6 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     val btableMetadata: SqlBindingTableMetadata =
       relation.asInstanceOf[TargetTreeNode].bindingTable.asInstanceOf[SqlBindingTableMetadata]
     val data: DataFrame = btableMetadata.solveBtableOps(sparkSession)
-//    data.explain(true)
-//    data.show()
     data
   }
 

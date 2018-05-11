@@ -1,26 +1,29 @@
 package spark.sql
 
 import algebra.AlgebraRewriter
+import algebra.expressions.Label
 import algebra.operators.Column._
 import algebra.operators._
 import algebra.trees.{AlgebraContext, AlgebraTreeNode}
 import compiler.CompileContext
-import org.apache.spark.sql.functions.{expr, lit}
+import org.apache.spark.sql.functions.{avg, expr, first, lit}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row}
-import org.scalatest.{BeforeAndAfterAll, FunSuite}
+import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, FunSuite}
 import parser.SpoofaxParser
 import parser.trees.ParseContext
+import schema.EntitySchema.LabelRestrictionMap
+import schema.{Catalog, SchemaMap, Table}
 import spark._
 
 /**
-  * Verifies that the [[SqlPlanner]] creates correct [[DataFrame]] binding tables. The tests
-  * also assert that the implementation of the physical operators with Spark produces the expected
-  * results. The operators are not tested individually - we only look at the results obtained by
-  * running the code produced by these operators.
+  * Verifies that the [[SqlPlanner]] creates correct [[DataFrame]] binding tables and constructs the
+  * expected [[SparkGraph]]s. The test also assert that the implementation of the physical operators
+  * with Spark produces the expected results. The operators are not tested individually - we only
+  * look at the results obtained by running the code produced by these operators.
   */
 class SqlPlannerTest extends FunSuite
-  with TestGraph with BeforeAndAfterAll with SparkSessionTestWrapper {
+  with TestGraph with BeforeAndAfterEach with BeforeAndAfterAll with SparkSessionTestWrapper {
 
   import spark.implicits._
 
@@ -103,6 +106,14 @@ class SqlPlannerTest extends FunSuite
     btable1.crossJoin(btable2)
   }
 
+  // For now, we are not checking graph name, so we assign a random one.
+  val TEMP_GRAPH_NAME: String = "foo"
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    Catalog.resetBaseEntityTableIndex()
+  }
+
   override def beforeAll() {
     super.beforeAll()
     db.registerGraph(graph)
@@ -110,158 +121,259 @@ class SqlPlannerTest extends FunSuite
   }
 
   /************************************ CONSTRUCT *************************************************/
-//  test("VertexCreate of bound variable - CONSTRUCT (c) MATCH (c)") {
-//    val vertex = extractConstructClauses("CONSTRUCT (c) MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    // The binding table does not change with this CONSTRUCT query.
-//    val expectedHeader: Seq[String] = bindingTableSchema.fields.map(_.name)
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    compareDfs(
-//      actualDf.select(expectedHeader.head, expectedHeader.tail: _*),
-//      bindingTable.select(expectedHeader.head, expectedHeader.tail: _*))
-//  }
-//
-//  test("VertexCreate of bound variable, new properties (expr, const, inline, SET) - " +
-//    "CONSTRUCT (c {dw := 2 * c.weight}) SET c.constInt := 1 MATCH (c)") {
-//    val vertex =
-//      extractConstructClauses("CONSTRUCT (c {dw := 2 * c.weight}) SET c.constInt := 1 MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    val existingProps: Seq[String] = bindingTableSchema.fields.map(_.name)
-//    val newProps: Seq[String] = Seq("c$dw", "c$constInt")
-//    val expectedHeader: Seq[String] = existingProps ++ newProps
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    val expectedDf =
-//      bindingTable
-//        .withColumn("c$constInt", lit(1))
-//        .withColumn("c$dw", expr("2 * `c$weight`"))
-//
-//    compareDfs(
-//      actualDf.select(expectedHeader.head, expectedHeader.tail: _*),
-//      expectedDf.select(expectedHeader.head, expectedHeader.tail: _*))
-//  }
-//
-//  // TODO: Removing of properties and labels happens at a higher level in the construction phase,
-//  // the effects will not be seen at the construct table level. This should be checked after adding
-//  // the vertex to a PathPropertyGraph.
-//  ignore("VertexCreate of bound variable, remove property and label - " +
-//    "CONSTRUCT (c) REMOVE c.onDiet REMOVE c:Cat MATCH (c)") {
-//    val vertex = extractConstructClauses("CONSTRUCT (c) REMOVE c.onDiet REMOVE c:Cat MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    val expectedHeader: Seq[String] =
-//      bindingTableSchema.fields.map(_.name) diff Seq("c$onDiet", s"c$$$labelCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    compareDfs(
-//      actualDf.select(expectedHeader.head, expectedHeader.tail: _*),
-//      bindingTable.select(expectedHeader.head, expectedHeader.tail: _*))
-//  }
-//
-//  test("VertexCreate of bound variable, filter binding table - " +
-//    "CONSTRUCT (c) WHEN c.age >= 5 MATCH (c)") {
-//    val vertex = extractConstructClauses("CONSTRUCT (c) WHEN c.age >= 5 MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    val expectedHeader: Seq[String] = bindingTableSchema.fields.map(_.name)
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    val expectedDf = bindingTable.filter("`c$age` >= 5")
-//    compareDfs(
-//      actualDf.select(expectedHeader.head, expectedHeader.tail: _*),
-//      expectedDf.select(expectedHeader.head, expectedHeader.tail: _*))
-//  }
-//
-//  test("VertexCreate of unbound variable - CONSTRUCT (x) MATCH (c)") {
-//    val vertex = extractConstructClauses("CONSTRUCT (x) MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    // Columns of c from the binding table are also preserved in the result in this case.
-//    val bindingTableColumns: Seq[String] =
-//      bindingTableSchema.fields
-//        .map(_.name)
-//        .filter(fieldName => fieldName.startsWith("c"))
-//    val expectedHeader: Seq[String] = Seq(s"x$$$idCol") ++ bindingTableColumns
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Cannot directly compare df's contents, because the monotonically increasing id's are not
-//    // necessarily contiguous numbers. We assert here that each new vertex receives a unique id.
-//    assert(
-//      actualDf.select(s"x$$$idCol").collect().map(_(0)).toSet.size ==
-//        bindingTableData.size)
-//  }
-//
-//  test("VertexCreate of unbound variable, add prop and label - " +
-//    "CONSTRUCT (x :XLabel {constInt := 1}) MATCH (c)") {
-//    val vertex = extractConstructClauses("CONSTRUCT (x :XLabel {constInt := 1}) MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    // Columns of c from the binding table are also preserved in the result in this case.
-//    val bindingTableColumns: Seq[String] =
-//      bindingTableSchema.fields
-//        .map(_.name)
-//        .filter(fieldName => fieldName.startsWith("c"))
-//    val newColumns: Seq[String] = Seq(s"x$$$idCol", s"x$$$labelCol", "x$constInt")
-//    val expectedHeader: Seq[String] = bindingTableColumns ++ newColumns
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    val expectedDf =
-//      bindingTable
-//        .drop(tableLabelColumn.columnName)
-//        .withColumn(tableLabelColumn.columnName, lit("XLabel"))
-//        .withColumn("constInt", lit(1))
-//    compareDfs(
-//      actualDf.select(s"x$$$labelCol", "x$constInt"),
-//      expectedDf.select(labelCol, "constInt"))
-//  }
-//
-//  test("VertexCreate of unbound variable, GROUP binding table - " +
-//    "CONSTRUCT (x GROUP c.onDiet) MATCH (c)") {
-//    val vertex = extractConstructClauses("CONSTRUCT (x GROUP c.onDiet) MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    // All columns of the binding table are preserved + the column with x's id is added to the
-//    // result.
-//    val expectedHeader: Seq[String] = bindingTableSchema.fields.map(_.name) ++ Seq(s"x$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Cannot directly compare x's ids, because the monotonically increasing id's are not
-//    // necessarily contiguous numbers. We assert here that for each group in the binding table
-//    // the new vertex x receives a unique id.
-//    assert(actualDf.select(s"x$$$idCol").collect().map(_(0)).toSet.size ==
-//      bindingTableData.groupBy(_.onDiet).size)
-//  }
-//
-//  test("VertexCreate of unbound variable, GROUP binding table, aggregate prop - " +
-//    "CONSTRUCT (x GROUP c.onDiet {avgw := AVG(c.weight)}) MATCH (c)") {
-//    val vertex =
-//      extractConstructClauses("CONSTRUCT (x GROUP c.onDiet {avgw := AVG(c.weight)}) MATCH (c)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, vertex).head
-//
-//    // All columns of the binding table are preserved + the columns of x are added to the result:
-//    // the id and the aggreated prop, avgw.
-//    val expectedHeader: Seq[String] =
-//      bindingTableSchema.fields.map(_.name) ++ Seq(s"x$$$idCol", "x$avgw")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    val expectedGroups = bindingTableData.groupBy(_.onDiet)
-//    val expectedGroupData =
-//      expectedGroups.map {
-//        case (key, cats) => key -> (cats.map(_.weight).sum / cats.size.toDouble)
-//      }
-//    val actualGroupData =
-//      actualDf
-//        .select("c$onDiet", "x$avgw")
-//        .collect()
-//        .map(row => (row(0), row(1)))
-//
-//    assert(actualGroupData.length == bindingTableData.size)
-//    assert(actualGroupData.toSet == expectedGroupData.toSet)
-//  }
-//
+  test("VertexCreate of bound variable - CONSTRUCT (c) MATCH (c)-[e]->(f)") {
+    val vertex = extractConstructClauses("CONSTRUCT (c) MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            // All columns of c are preserved.
+            val bindingTableColumns: Seq[String] =
+              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  test("VertexCreate of bound variable, new properties (expr, const, inline, SET) - " +
+    "CONSTRUCT (c {dw := 2 * c.weight}) SET c.constInt := 1 MATCH (c)-[e]->(f)") {
+    val vertex =
+      extractConstructClauses("CONSTRUCT (c {dw := 2 * c.weight}) SET c.constInt := 1 MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            val bindingTableColumns: Seq[String] =
+              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+            bindingTable
+              .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+              .withColumn("c$constInt", lit(1))
+              .withColumn("c$dw", expr("2 * `c$weight`"))
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  // TODO: Removing a label is not correctly implemented yet.
+  ignore("VertexCreate of bound variable, remove property and label - " +
+    "CONSTRUCT (c) REMOVE c.onDiet REMOVE c:Cat MATCH (c)") {
+    val vertex = extractConstructClauses("CONSTRUCT (c) REMOVE c.onDiet REMOVE c:Cat MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"), // TODO: Change this label to the actual one.
+          data = {
+            val bindingTableColumns: Seq[String] =
+              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c")) diff Seq("c$onDiet")
+            bindingTable
+              .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  test("VertexCreate of bound variable, filter binding table - " +
+    "CONSTRUCT (c) WHEN c.age >= 5 MATCH (c)-[e]->(f)") {
+    val vertex = extractConstructClauses("CONSTRUCT (c) WHEN c.age >= 5 MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"), // TODO: Change this label to the actual one.
+          data = {
+            val bindingTableColumns: Seq[String] =
+              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+            bindingTable
+              .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+              .filter("`c$age` >= 5")
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  // TODO: Remove label assignment of x, once we fix the multiple/missing label(s).
+  ignore("VertexCreate of unbound variable - CONSTRUCT (x) MATCH (c)") {
+    val vertex = extractConstructClauses("CONSTRUCT (x) MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Xlabel"),
+          data = {
+            bindingTable
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$labelCol", lit("Xlabel"))
+              .select(s"x$$$idCol", s"x$$$labelCol")
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  test("VertexCreate of unbound variable, add prop and label - " +
+    "CONSTRUCT (x :XLabel {constInt := 1}) MATCH (c)") {
+    val vertex = extractConstructClauses("CONSTRUCT (x :XLabel {constInt := 1}) MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("XLabel"),
+          data = {
+            bindingTable
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$labelCol", lit("XLabel"))
+              .withColumn("x$constInt", lit(1))
+              .select(s"x$$$idCol", s"x$$$labelCol", "x$constInt")
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  // TODO: Remove label assignment of x, once we fix the multiple/missing label(s).
+  test("VertexCreate of unbound variable, GROUP binding table - " +
+    "CONSTRUCT (x GROUP c.onDiet) MATCH (c)") {
+    val vertex = extractConstructClauses("CONSTRUCT (x GROUP c.onDiet :XLabel) MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("XLabel"),
+          data = {
+            bindingTable
+              .groupBy("c$onDiet")
+              .agg(first(s"c$$$idCol"))
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$labelCol", lit("XLabel"))
+              .select(s"x$$$idCol", s"x$$$labelCol")
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
+  // TODO: Remove label assignment of x, once we fix the multiple/missing label(s).
+  test("VertexCreate of unbound variable, GROUP binding table, aggregate prop - " +
+    "CONSTRUCT (x GROUP c.onDiet {avgw := AVG(c.weight)}) MATCH (c)") {
+    val vertex =
+      extractConstructClauses(
+        "CONSTRUCT (x GROUP c.onDiet :XLabel {avgw := AVG(c.weight)}) MATCH (c)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("XLabel"),
+          data = {
+            bindingTable
+              .groupBy("c$onDiet")
+              .agg(avg("c$weight") as "x$avgw")
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$labelCol", lit("XLabel"))
+              .select(s"x$$$idCol", s"x$$$labelCol", "x$avgw")
+          }
+        )
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
+
 //  test("EdgeCreate of bound edge and endpoints - CONSTRUCT (c)-[e]->(f) MATCH (c)-[e]->(f)") {
 //    val edge = extractConstructClauses("CONSTRUCT (c)-[e]->(f) MATCH (c)-[e]->(f)")
 //    val actualDf = sparkPlanner.constructGraph(bindingTable, edge).head
@@ -570,18 +682,73 @@ class SqlPlannerTest extends FunSuite
 //      actualDfs.last.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
 //      expectedBelowThree.select(bindingTableColumns.head, bindingTableColumns.tail: _*))
 //  }
-//
-//
-//  private def extractConstructClauses(query: String, expectedNumClauses: Int = 1)
-//  : Seq[AlgebraTreeNode] = {
-//
-//    val createGraph = (parser andThen algebraRewriter) (query)
-//    val constructClauses = createGraph.asInstanceOf[GraphCreate].constructClauses
-//
-//    assert(constructClauses.size == expectedNumClauses)
-//
-//    constructClauses
-//  }
+
+  private def extractConstructClauses(query: String, expectedNumClauses: Int = 1)
+  : Seq[AlgebraTreeNode] = {
+
+    val createGraph = (parser andThen algebraRewriter) (query)
+    val constructClauses = createGraph.asInstanceOf[GraphCreate].constructClauses
+
+    assert(constructClauses.size == expectedNumClauses)
+
+    constructClauses
+  }
+
+  private def checkGraph(actualGraph: SparkGraph, expectedGraph: SparkGraph): Unit = {
+    // Check that the edge and path restrictions are the expected ones.
+    assert(actualGraph.edgeRestrictions == expectedGraph.edgeRestrictions)
+    assert(actualGraph.storedPathRestrictions == expectedGraph.storedPathRestrictions)
+
+    // For each entity type, check that we have the expected tables.
+    checkTables(actualGraph.vertexData, expectedGraph.vertexData)
+    checkTables(actualGraph.edgeData, expectedGraph.edgeData)
+    checkTables(actualGraph.pathData, expectedGraph.pathData)
+  }
+
+  private def checkTables(actualTables: Seq[Table[DataFrame]],
+                          expectedTables: Seq[Table[DataFrame]]): Unit = {
+    // Check we have the same number of tables as expected for this entity.
+    assert(actualTables.size == expectedTables.size)
+
+    val actualTableMap: Map[Label, Table[DataFrame]] = {
+      val labels: Seq[Label] = actualTables.map(table => table.name)
+      assert(labels.size == labels.distinct.size) // no duplicate labels
+      actualTables.map(table => table.name -> table).toMap
+    }
+
+    val expectedTableMap: Map[Label, Table[DataFrame]] =
+      expectedTables.map(table => table.name -> table).toMap
+
+    // Check we have the same labels as expected for this entity.
+    assert(actualTableMap.keySet == expectedTableMap.keySet)
+
+    // For each label, check that data correspond to the expected data.
+    actualTableMap.foreach {
+      case (label, actualTable) => checkTable(actualTable, expectedTableMap(label))
+    }
+  }
+
+  private def checkTable(actualTable: Table[DataFrame], expectedTable: Table[DataFrame]): Unit = {
+    assert(actualTable.name == expectedTable.name)
+
+    val expectedColumnsRenamed: Seq[String] =
+      expectedTable.data.columns.map(column => column.split("\\$")(1))
+    val expectedTableColumnsRenamed: DataFrame = expectedTable.data.toDF(expectedColumnsRenamed: _*)
+    val actualHeader: Seq[String] = actualTable.data.columns
+    compareHeaders(actualHeader, expectedTableColumnsRenamed)
+
+    val actualIds: Seq[Int] = actualTable.data.select(idCol).collect().map(_.getInt(0))
+    val expectedIds: Seq[Int] =
+      Catalog.START_BASE_TABLE_INDEX until (Catalog.START_BASE_TABLE_INDEX + actualIds.size)
+    assert(actualIds.size == actualIds.distinct.size)
+    assert(actualIds.toSet == expectedIds.toSet)
+
+    val headerWithoutId: Seq[String] = actualHeader diff Seq(idCol)
+    compareDfs(
+      actualTable.data.select(headerWithoutId.head, headerWithoutId.tail: _*),
+      expectedTableColumnsRenamed.select(headerWithoutId.head, headerWithoutId.tail: _*)
+    )
+  }
 
   /************************************** MATCH ***************************************************/
   test("Binding table of VertexScan - (c:Cat)") {
