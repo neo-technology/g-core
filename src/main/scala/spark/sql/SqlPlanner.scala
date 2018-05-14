@@ -265,7 +265,8 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     val labelColumn: String = data.select(labelColumnSelect).first.getString(0)
     val newDataColumnNames: Seq[String] =
       data.columns.map(columnName => columnName.split(s"${reference.refName}\\$$")(1))
-    val dataColumnsRenamed: DataFrame = data.drop(labelColumn).toDF(newDataColumnNames: _*)
+    val dataColumnsRenamed: DataFrame =
+      data.toDF(newDataColumnNames: _*).drop(s"${tableLabelColumn.columnName}")
     Table[DataFrame](name = Label(labelColumn), data = dataColumnsRenamed)
   }
 }
