@@ -47,13 +47,16 @@ case class EntityConstruct(reference: Reference,
       SELECT ROW_NUMBER() OVER (ORDER BY `$idColumnName`) AS `$constructIdColumnName`,
       $columnsToSelect FROM (${relationBtable.btableOps.resQuery})"""
 
-    val newRefSchema: StructType =
-      StructType(
-        (fieldsToSelect + constructIdColumnStructField)
-          .filter(_.name.startsWith(reference.refName))
-          .toArray)
     val newSchemaMap: Map[Reference, StructType] =
-      relationBtable.schemaMap ++ Map(reference -> newRefSchema)
+      relationBtable.schemaMap ++
+        (fieldsToSelect + constructIdColumnStructField)
+          .map(structField => {
+            val reference: Reference = Reference(structField.name.split("\\$")(0))
+            reference -> structField
+          })
+          .groupBy(refStructFieldTuple => refStructFieldTuple._1) // group by reference
+          .mapValues(refStructFieldTuples => refStructFieldTuples.map(_._2))
+          .mapValues(structFields => StructType(structFields.toArray))
     val newBtableSchema: StructType = StructType(newSchemaMap.values.flatMap(_.fields).toArray)
 
     SqlBindingTableMetadata(
