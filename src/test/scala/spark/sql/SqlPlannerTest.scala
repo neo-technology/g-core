@@ -138,9 +138,9 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            // All columns of c are preserved.
+            // All columns of c are preserved, except for the label column.
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
             bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           }
         )
@@ -170,7 +170,7 @@ class SqlPlannerTest extends FunSuite
           name = Label("Cat"),
           data = {
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
             bindingTable
               .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
               .withColumn("c$constInt", lit(1))
@@ -203,7 +203,7 @@ class SqlPlannerTest extends FunSuite
           name = Label("Cat"), // TODO: Change this label to the actual one.
           data = {
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c")) diff Seq("c$onDiet")
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq("c$onDiet", s"c$labelCol")
             bindingTable
               .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           }
@@ -230,10 +230,10 @@ class SqlPlannerTest extends FunSuite
 
       override def vertexData: Seq[Table[DataFrame]] = Seq(
         Table(
-          name = Label("Cat"), // TODO: Change this label to the actual one.
+          name = Label("Cat"),
           data = {
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
             bindingTable
               .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
               .filter("`c$age` >= 5")
@@ -265,8 +265,7 @@ class SqlPlannerTest extends FunSuite
           data = {
             bindingTable
               .withColumn(s"x$$$idCol", lit(1))
-              .withColumn(s"x$$$labelCol", lit("Xlabel"))
-              .select(s"x$$$idCol", s"x$$$labelCol")
+              .select(s"x$$$idCol")
           }
         )
       )
@@ -295,9 +294,8 @@ class SqlPlannerTest extends FunSuite
           data = {
             bindingTable
               .withColumn(s"x$$$idCol", lit(1))
-              .withColumn(s"x$$$labelCol", lit("XLabel"))
               .withColumn("x$constInt", lit(1))
-              .select(s"x$$$idCol", s"x$$$labelCol", "x$constInt")
+              .select(s"x$$$idCol", "x$constInt")
           }
         )
       )
@@ -329,8 +327,7 @@ class SqlPlannerTest extends FunSuite
               .groupBy("c$onDiet")
               .agg(first(s"c$$$idCol"))
               .withColumn(s"x$$$idCol", lit(1))
-              .withColumn(s"x$$$labelCol", lit("XLabel"))
-              .select(s"x$$$idCol", s"x$$$labelCol")
+              .select(s"x$$$idCol")
           }
         )
       )
@@ -364,8 +361,7 @@ class SqlPlannerTest extends FunSuite
               .groupBy("c$onDiet")
               .agg(avg("c$weight") as "x$avgw")
               .withColumn(s"x$$$idCol", lit(1))
-              .withColumn(s"x$$$labelCol", lit("XLabel"))
-              .select(s"x$$$idCol", s"x$$$labelCol", "x$avgw")
+              .select(s"x$$$idCol", "x$avgw")
           }
         )
       )
@@ -393,17 +389,15 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            // All columns of c are preserved.
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
             bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           }),
         Table(
           name = Label("Food"),
           data = {
-            // All columns of f are preserved.
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("f"))
+              bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
             bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           })
       )
@@ -412,14 +406,13 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Eats"),
           data = {
-            // All columns of e are preserved.
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("e"))
+              bindingTable.columns.filter(_.startsWith("e")) diff Seq(s"e$$$labelCol")
             bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           })
       )
     }
-    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdgeFromTo))
   }
 
   // TODO: Remove b's label once the missing/multiple labels problems is fixed.
@@ -428,12 +421,7 @@ class SqlPlannerTest extends FunSuite
     val edge = extractConstructClauses("CONSTRUCT (c)-[e]->(b :BLabel) MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
     // Add b's columns and substitute e$fromId with b$id.
-    val btableWithB =
-      bindingTable
-        .drop(s"e$$$toIdCol")
-        .withColumn(s"b$$$idCol", monotonically_increasing_id())
-        .withColumn(s"b$$$labelCol", lit("BLabel"))
-        .withColumn(s"e$$$toIdCol", expr(s"`b$$$idCol`"))
+    val expectedBtable = bindingTable.withColumn(s"b$$$idCol", lit(1))
 
     val expectedGraph = new SparkGraph {
       override def graphName: String = TEMP_GRAPH_NAME
@@ -452,12 +440,12 @@ class SqlPlannerTest extends FunSuite
           data = {
             // All columns of c are preserved.
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
             bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           }),
         Table(
           name = Label("BLabel"),
-          data = btableWithB.select(s"b$$$idCol", s"b$$$labelCol"))
+          data = expectedBtable.select(s"b$$$idCol"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq(
@@ -466,12 +454,12 @@ class SqlPlannerTest extends FunSuite
           data = {
             // All columns of e are preserved.
             val bindingTableColumns: Seq[String] =
-              bindingTableSchema.fields.map(_.name).filter(_.startsWith("e"))
-            btableWithB.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+              bindingTable.columns.filter(_.startsWith("e")) diff Seq(s"e$$$labelCol")
+            expectedBtable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           })
       )
     }
-    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdgeFrom))
   }
 
   // TODO: Remove a's and b's labels once we fix the issue with missing or multiple labels.
@@ -479,15 +467,11 @@ class SqlPlannerTest extends FunSuite
     "CONSTRUCT (a)-[e]->(b) MATCH (c)-[e]->(f)") {
     val edge = extractConstructClauses("CONSTRUCT (a :ALabel)-[e]->(b :BLabel) MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
-    val btableWithAandB =
+    val expectedBtable =
       bindingTable
-        .drop(s"e$$$fromIdCol")
-        .drop(s"e$$$toIdCol")
         .drop(s"e$$$labelCol")
-        .withColumn(s"a$$$idCol", monotonically_increasing_id())
-        .withColumn(s"b$$$idCol", monotonically_increasing_id())
-        .withColumn(s"e$$$fromIdCol", expr(s"`a$$$idCol`"))
-        .withColumn(s"e$$$toIdCol", expr(s"`b$$$idCol`"))
+        .withColumn(s"a$$$idCol", lit(1))
+        .withColumn(s"b$$$idCol", lit(2))
 
     val expectedGraph = new SparkGraph {
       override def graphName: String = TEMP_GRAPH_NAME
@@ -503,10 +487,10 @@ class SqlPlannerTest extends FunSuite
       override def vertexData: Seq[Table[DataFrame]] = Seq(
         Table(
           name = Label("ALabel"),
-          data = btableWithAandB.select(s"a$$$idCol")),
+          data = expectedBtable.select(s"a$$$idCol")),
         Table(
           name = Label("BLabel"),
-          data = btableWithAandB.select(s"b$$$idCol"))
+          data = expectedBtable.select(s"b$$$idCol"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq(
@@ -514,154 +498,236 @@ class SqlPlannerTest extends FunSuite
           name = Label("Eats"),
           data = {
             // All columns of e are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] = btableWithAandB.columns.filter(_.startsWith("e"))
-            btableWithAandB.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val bindingTableColumns: Seq[String] = expectedBtable.columns.filter(_.startsWith("e"))
+            expectedBtable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
           })
       )
     }
-    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
   }
 
-//  test("EdgeCreate of unbound edge, two bound endpoints - " +
-//    "CONSTRUCT (c)-[x]-(f) MATCH (c)-[e]->(f)") {
-//    val edge = extractConstructClauses("CONSTRUCT (c)-[x]-(f) MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, edge).head
-//
-//    // All attributes of the binding table are preserved.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//
-//    // + The new edge x, which only receives an id.
-//    val expectedHeader: Seq[String] = bindingTableColumns ++ Seq(s"x$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // First, compare the part of the binding table that stays constant.
-//    val expectedDf = bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
-//    compareDfs(
-//      actualDf.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
-//      expectedDf)
-//
-//    // Then, check that each new edge x has received a different id.
-//    val xids = actualDf.select(s"x$$$idCol").collect().map(_(0))
-//    assert(xids.toSet.size == bindingTableRows.length) // no 2 ids are equal
-//  }
-//
-//  test("EdgeCreate of unbound edge, two unbound endpoints - " +
-//    "CONSTRUCT (a)-[x]-(b) MATCH (c)-[e]->(f)") {
-//    val edge = extractConstructClauses("CONSTRUCT (a)-[x]-(b) MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, edge).head
-//
-//    // All attributes of the binding table are preserved.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//
-//    // + The new edge x and endpoints a and b, which only receive an id.
-//    val expectedHeader: Seq[String] =
-//      bindingTableColumns ++ Seq(s"x$$$idCol", s"a$$$idCol", s"b$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Compare the part of the binding table that stays constant.
-//    val expectedDf = bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
-//    compareDfs(
-//      actualDf.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
-//      expectedDf)
-//
-//    // Check that each new edge x or vertex a or b has received a different id.
-//    val xids = actualDf.select(s"x$$$idCol").collect().map(_(0))
-//    assert(xids.toSet.size == bindingTableRows.length) // no 2 ids are equal
-//
-//    val aids = actualDf.select(s"a$$$idCol").collect().map(_(0))
-//    assert(aids.toSet.size == bindingTableRows.length) // no 2 ids are equal
-//
-//    val bids = actualDf.select(s"b$$$idCol").collect().map(_(0))
-//    assert(bids.toSet.size == bindingTableRows.length) // no 2 ids are equal
-//  }
-//
-//  test("EdgeCreate of unbound edge, one bound endpoint, one unbound grouped endpoint - " +
-//    "CONSTRUCT (c)-[x]->(d GROUP c.onDiet) MATCH (c)-[e]->(f)") {
-//    val edge = extractConstructClauses("CONSTRUCT (c)-[x]->(d GROUP c.onDiet) MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, edge).head
-//
-//    // All attributes of the binding table are preserved.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//
-//    // x and d each only receive an id.
-//    val expectedHeader: Seq[String] = bindingTableColumns ++ Seq(s"x$$$idCol", s"d$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Compare the part of the binding table that stays constant.
-//    val expectedDf = bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
-//    compareDfs(
-//      actualDf.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
-//      expectedDf)
-//
-//    // Check that each new edge x received a different id.
-//    val xids = actualDf.select(s"x$$$idCol").collect().map(_(0))
-//    assert(xids.toSet.size == bindingTableRows.length) // no 2 ids are equal
-//
-//    // Check that each new vertex d received as many new id's, as there are groups of c.onDiet in
-//    // the binding table.
-//    val dids = actualDf.select(s"d$$$idCol").collect().map(_(0))
-//    assert(dids.toSet.size == bindingTableData.groupBy(_.onDiet).size)
-//  }
-//
-//  test("EdgeCreate with new properties and labels for endpoints and connection - " +
-//    "CONSTRUCT (c)-[x :OnDiet]->(d GROUP c.onDiet :Boolean {val := c.onDiet}) " +
-//    "MATCH (c)-[e]->(f)") {
-//    val edge =
-//      extractConstructClauses(
-//        "CONSTRUCT (c)-[x :OnDiet]->(d GROUP c.onDiet :Boolean {val := c.onDiet}) " +
-//          "MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, edge).head
-//
-//    // All attributes of the binding table are preserved.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//
-//    // edge x receives a new labels and an id attribute
-//    val xAttributes = Seq(s"x$$$idCol", s"x$$$labelCol")
-//
-//    // vertex d receives a new label, property val and an id attribute
-//    val dAttributes = Seq(s"d$$$idCol", s"d$$$labelCol", "d$val")
-//
-//    // x and d each only receive an id.
-//    val expectedHeader: Seq[String] = bindingTableColumns ++ xAttributes ++ dAttributes
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Omit the new id columns, because we check the ids are correct in a previous test. We are now
-//    // interested in testing the labels and properties only.
-//    val expectedDf =
-//      bindingTable
-//        .withColumn(s"x$$$labelCol", lit("OnDiet"))
-//        .withColumn(s"d$$$labelCol", lit("Boolean"))
-//        .withColumn("d$val", expr("`c$onDiet`"))
-//
-//    compareDfs(
-//      actualDf.select(s"x$$$labelCol", s"d$$$labelCol", "d$val"),
-//      expectedDf.select(s"x$$$labelCol", s"d$$$labelCol", "d$val"))
-//  }
-//
-//  test("EdgeCreate from duplicate pairs of endpoints, check implicit grouping is used - " +
-//    "CONSTRUCT (c1)-[e0]->(f1) MATCH (c1)-[e1]->(f1), (c2)-[e2]->(f2) (cross-join of patterns)") {
-//    val edge =
-//      extractConstructClauses("CONSTRUCT (c1)-[e0]->(f1) MATCH (c1)-[e1]->(f1), (c2)-[e2]->(f2)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTableDuplicateData, edge).head
-//
-//    // All attributes of the binding table are preserved.
-//    val bindingTableColumns: Seq[String] = bindingTableDuplicateData.schema.fields.map(_.name)
-//
-//    // Edge e0 receives an id.
-//    val expectedHeader: Seq[String] = bindingTableColumns ++ Seq(s"e0$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // The number of new edges e0 must be equal to the number of unique pairs (c1, f1).
-//    val e0ids = actualDf.select(s"e0$$$idCol").collect().map(_(0))
-//    val vertexGroups =
-//      bindingTableDuplicateData
-//        .select(s"c1$$$idCol", s"f1$$$idCol")
-//        .collect()
-//        .map(row => (row(0).toString, row(1).toString))
-//        .toSet
-//    assert(e0ids.toSet.size == vertexGroups.size)
-//  }
-//
+  // TODO: Remove labels once we fix the issue with missing or multiple labels.
+  test("EdgeCreate of unbound edge, two bound endpoints - " +
+    "CONSTRUCT (c)-[x]-(f) MATCH (c)-[e]->(f)") {
+    val edge = extractConstructClauses("CONSTRUCT (c)-[x :XLabel]-(f) MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(Label("XLabel") -> (Label("Cat"), Label("Food")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            // All columns of c are preserved, except for the label column.
+            val bindingTableColumns: Seq[String] =
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+          }),
+        Table(
+          name = Label("Food"),
+          data = {
+            // All columns of f are preserved, except for the label column.
+            val bindingTableColumns: Seq[String] =
+              bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+          })
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("XLabel"),
+          data =
+            bindingTable
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$fromIdCol", expr(s"`e$$$fromIdCol`"))
+              .withColumn(s"x$$$toIdCol", expr(s"`e$$$toIdCol`"))
+              .select(s"x$$$idCol", s"x$$$fromIdCol", s"x$$$toIdCol"))
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqFromTo))
+  }
+
+  // TODO: Remove x, a, b labels, once we fix issue with multiple/missing labels.
+  test("EdgeCreate of unbound edge, two unbound endpoints - " +
+    "CONSTRUCT (a)-[x]-(b) MATCH (c)-[e]->(f)") {
+    val edge =
+      extractConstructClauses("CONSTRUCT (a :ALabel)-[x :XLabel]-(b :BLabel) MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
+    val expectedBtable =
+      bindingTable
+        .withColumn(s"a$$$idCol", lit(1))
+        .withColumn(s"b$$$idCol", lit(2))
+        .withColumn(s"x$$$idCol", lit(3))
+        .withColumn(s"x$$$fromIdCol", expr(s"`a$$$idCol`"))
+        .withColumn(s"x$$$toIdCol", expr(s"`b$$$idCol`"))
+
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(Label("XLabel") -> (Label("ALabel"), Label("BLabel")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("ALabel"),
+          data = expectedBtable.select(s"a$$$idCol")),
+        Table(
+          name = Label("BLabel"),
+          data = expectedBtable.select(s"b$$$idCol"))
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("XLabel"),
+          data = {
+            expectedBtable.select(s"x$$$idCol", s"x$$$fromIdCol", s"x$$$toIdCol")
+          })
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
+  }
+
+  // TODO: Unignore once we fix issue with multiple/missing labels.
+  ignore("EdgeCreate of unbound edge, one bound endpoint, one unbound grouped endpoint - " +
+    "CONSTRUCT (c)-[x]->(d GROUP c.onDiet) MATCH (c)-[e]->(f)") {
+    val edge =
+      extractConstructClauses(
+        "CONSTRUCT (c)-[x]->(d GROUP c.onDiet) MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(Label("XLabel") -> (Label("Cat"), Label("DLabel")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            // All columns of c are preserved, except for the label column.
+            val bindingTableColumns: Seq[String] =
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+          }),
+        Table(
+          name = Label("DLabel"),
+          data = {
+            bindingTable
+              .groupBy("c$onDiet")
+              .agg(first(s"c$$$idCol"))
+              .withColumn(s"d$$$idCol", lit(1))
+              .select(s"d$$$idCol")
+          })
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("XLabel"),
+          data =
+            bindingTable
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$fromIdCol", expr(s"`e$$$fromIdCol`"))
+              .withColumn(s"x$$$toIdCol", expr(s"`e$$$toIdCol`"))
+              .select(s"x$$$idCol", s"x$$$fromIdCol", s"x$$$toIdCol"))
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
+  }
+
+  test("EdgeCreate with new properties and labels for endpoints and connection - " +
+    "CONSTRUCT (c)-[x :OnDiet]->(d GROUP c.onDiet :Boolean {val := c.onDiet}) " +
+    "MATCH (c)-[e]->(f)") {
+    val edge =
+      extractConstructClauses(
+        "CONSTRUCT (c)-[x :OnDiet]->(d GROUP c.onDiet :Boolean {val := c.onDiet}) " +
+          "MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = TEMP_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(Label("OnDiet") -> (Label("Cat"), Label("Boolean")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            // All columns of c are preserved, except for the label column.
+            val bindingTableColumns: Seq[String] =
+              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+          }),
+        Table(
+          name = Label("Boolean"),
+          data = {
+            bindingTable
+              .groupBy("c$onDiet")
+              .agg(first(s"c$$$idCol"))
+              .withColumn(s"d$$$idCol", lit(1))
+              .withColumn("d$val", expr("`c$onDiet`"))
+              .select(s"d$$$idCol", "d$val")
+          })
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("OnDiet"),
+          data =
+            bindingTable
+              .withColumn(s"x$$$idCol", lit(1))
+              .withColumn(s"x$$$fromIdCol", expr(s"`e$$$fromIdCol`"))
+              .withColumn(s"x$$$toIdCol", expr(s"`e$$$toIdCol`"))
+              .select(s"x$$$idCol", s"x$$$fromIdCol", s"x$$$toIdCol"))
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
+  }
+
+  // TODO: Remove label of e0, once we fix the issue with the labels.
+  test("EdgeCreate from duplicate pairs of endpoints, check implicit grouping is used - " +
+    "CONSTRUCT (c1)-[e0]->(f1) MATCH (c1)-[e1]->(f1), (c2)-[e2]->(f2) (cross-join of patterns)") {
+    val edge =
+      extractConstructClauses(
+        "CONSTRUCT (c1 :CLabel)-[e0 :ELabel]->(f1 :FLabel) MATCH (c1)-[e1]->(f1), (c2)-[e2]->(f2)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTableDuplicateData, edge)
+
+    // The number of new edges e0 must be equal to the number of unique pairs (c1, f1).
+    val e0ids =
+      actualGraph.asInstanceOf[SparkGraph]
+        .edgeData.head.data
+        .select(s"$idCol").collect().map(_(0))
+    val vertexGroups =
+      bindingTableDuplicateData
+        .select(s"c1$$$idCol", s"f1$$$idCol")
+        .collect()
+        .map(row => (row(0).toString, row(1).toString))
+        .toSet
+    assert(e0ids.toSet.size == vertexGroups.size)
+  }
+
 //  test("GroupConstruct of bound endpoints, unbound edges - " +
 //    "CONSTRUCT (c)-[e0]->(f)-[e1]->(c) MATCH (c)-[e]->(f)") {
 //    val group = extractConstructClauses("CONSTRUCT (c)-[e0]->(f)-[e1]->(c) MATCH (c)-[e]->(f)")
@@ -776,19 +842,25 @@ class SqlPlannerTest extends FunSuite
     constructClauses
   }
 
-  private def checkGraph(actualGraph: SparkGraph, expectedGraph: SparkGraph): Unit = {
+  private def checkGraph(actualGraph: SparkGraph,
+                         expectedGraph: SparkGraph,
+                         edgeEqualFn: Option[(Table[DataFrame], Table[DataFrame]) => EqEdgeBase] = None)
+  : Unit = {
+
     // Check that the edge and path restrictions are the expected ones.
     assert(actualGraph.edgeRestrictions == expectedGraph.edgeRestrictions)
     assert(actualGraph.storedPathRestrictions == expectedGraph.storedPathRestrictions)
 
     // For each entity type, check that we have the expected tables.
-    checkTables(actualGraph.vertexData, expectedGraph.vertexData, equalVertexTables)
-    checkTables(actualGraph.edgeData, expectedGraph.edgeData, equalEdgeTables)
+    checkTables(actualGraph.vertexData, expectedGraph.vertexData, EqVertex)
+
+    if (edgeEqualFn.isDefined)
+      checkTables(actualGraph.edgeData, expectedGraph.edgeData, edgeEqualFn.get)
   }
 
   private def checkTables(actualTables: Seq[Table[DataFrame]],
                           expectedTables: Seq[Table[DataFrame]],
-                          equalFn: (Table[DataFrame], Table[DataFrame]) => Unit): Unit = {
+                          equalFn: (Table[DataFrame], Table[DataFrame]) => EqBase): Unit = {
     // Check we have the same number of tables as expected for this entity.
     assert(actualTables.size == expectedTables.size)
 
@@ -806,37 +878,56 @@ class SqlPlannerTest extends FunSuite
 
     // For each label, check that data correspond to the expected data.
     actualTableMap.foreach {
-      case (label, actualTable) => equalFn(actualTable, expectedTableMap(label))
+      case (label, actualTable) => equalFn(actualTable, expectedTableMap(label)).assertEqual()
     }
   }
 
-  private def equalEdgeTables(actualEdgeTable: Table[DataFrame],
-                              expectedEdgeTable: Table[DataFrame]): Unit = {
-    assert(actualEdgeTable.name == expectedEdgeTable.name)
+  sealed abstract class EqBase(actualTable: Table[DataFrame],
+                               expectedTable: Table[DataFrame],
+                               idColumnNames: Seq[String]) {
 
-    val expectedColumnsRenamed: Seq[String] =
-      expectedEdgeTable.data.columns.map(column => column.split("\\$")(1))
-    val expectedTableColumnsRenamed: DataFrame =
-      expectedEdgeTable.data.toDF(expectedColumnsRenamed: _*)
-    val actualHeader: Seq[String] = actualEdgeTable.data.columns
-    compareHeaders(actualHeader, expectedTableColumnsRenamed)
+    val expectedTableColumnsRenamed: DataFrame = {
+      val expectedColumnsRenamed: Seq[String] =
+        expectedTable.data.columns.map(column => column.split("\\$")(1))
+      expectedTable.data.toDF(expectedColumnsRenamed: _*)
+    }
 
-    // Expected tables contain the binding table ids of the edge and endpoints. The construct ids of
-    // the edge and endpoints are assigned in the order of the edge ids in the binding table.
-    //
-    // btabtleIdTuples = [(edge_btable, from_btable, to_btable)]
-    // actualIdTuples = [(edge_actual, from_actual, to_actual)]
-    //
-    // edgeIdMap = [edge_actual.sorted -> edge_btable.sorted]
-    // btableTupleMap = [edge_btable -> (from_btable, to_btable)]
-    //
-    // btableFromIds = [from_btable].sorted
-    // actualFromIds = [from_actual].sorted
-    // btableToIds = [to_btable].sorted
-    // actualToIds = [to_actual].sorted
-    //
-    // fromIdMap = [from_btable -> from_actual]
-    // toIdMap = [to_btable -> to_actual]
+    val actualHeader: Seq[String] = actualTable.data.columns
+
+    val collectedActualIds: Seq[Long] =
+      actualTable.data.select(idCol).collect().map(_.get(0).toString.toLong)
+
+    def assertEqual(): Unit = {
+      assert(actualTable.name == expectedTable.name)
+      compareHeaders(actualHeader, expectedTableColumnsRenamed)
+      assertCorrectIds()
+      assertEqualDataWithoutId()
+    }
+
+    private def assertCorrectIds(): Unit = {
+      val actualIds: Seq[Long] = collectedActualIds
+      val baseId: Long =
+        START_BASE_TABLE_INDEX +
+          (actualIds.head - START_BASE_TABLE_INDEX) / TABLE_INDEX_INCREMENT * TABLE_INDEX_INCREMENT
+      val expectedIds: Seq[Long] = baseId until (baseId + actualIds.size)
+      assert(actualIds.size == actualIds.distinct.size)
+      assert(actualIds.toSet == expectedIds.toSet)
+    }
+
+    private def assertEqualDataWithoutId(): Unit = {
+      val headerWithoutId: Seq[String] = actualHeader diff idColumnNames
+      if (headerWithoutId.nonEmpty)
+        compareDfs(
+          actualTable.data.select(headerWithoutId.head, headerWithoutId.tail: _*),
+          expectedTableColumnsRenamed.select(headerWithoutId.head, headerWithoutId.tail: _*))
+    }
+  }
+
+  sealed case class EqVertex(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
+    extends EqBase(actualTable, expectedTable, Seq(idCol))
+
+  sealed abstract class EqEdgeBase(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
+    extends EqBase(actualTable, expectedTable, Seq(idCol, fromIdCol, toIdCol)) {
 
     val btableIdTuples: Seq[(Long, Long, Long)] =
       expectedTableColumnsRenamed
@@ -845,82 +936,83 @@ class SqlPlannerTest extends FunSuite
         .map(row =>
           (row.get(0).toString.toLong, row.get(1).toString.toLong, row.get(2).toString.toLong))
     val actualIdTuples: Seq[(Long, Long, Long)] =
-      actualEdgeTable.data
+      actualTable.data
         .select(idCol, fromIdCol, toIdCol)
         .collect()
         .map(row =>
           (row.get(0).toString.toLong, row.get(1).toString.toLong, row.get(2).toString.toLong))
 
-    println(s"btableIdTuples = $btableIdTuples")
-    println(s"actualIdTuples = $actualIdTuples")
-
     val btableEdgeIds: Seq[Long] = btableIdTuples.map(tuple => tuple._1)
     val actualEdgeIds: Seq[Long] = actualIdTuples.map(tuple => tuple._1)
 
-    val baseId: Long =
-      START_BASE_TABLE_INDEX +
-        (actualEdgeIds.head - START_BASE_TABLE_INDEX) / TABLE_INDEX_INCREMENT *
-          TABLE_INDEX_INCREMENT
-    val expectedEdgeIds: Seq[Long] = baseId until (baseId + actualEdgeIds.size)
-    assert(actualEdgeIds.size == actualEdgeIds.distinct.size)
-    assert(actualEdgeIds.toSet == expectedEdgeIds.toSet)
-
-    val edgeIdMap: Map[Long, Long] = (actualEdgeIds.sorted zip btableEdgeIds.sorted).toMap
+    val edgeActualToBtableId: Map[Long, Long] =
+      (actualEdgeIds.sorted zip btableEdgeIds.sorted).toMap
     val btableTupleMap: Map[Long, (Long, Long)] =
       btableIdTuples.map(tuple => tuple._1 -> (tuple._2, tuple._3)).toMap
 
-    println(s"edgeIdMap = $edgeIdMap")
-    println(s"btableTupleMap = $btableTupleMap")
-
     val btableFromIds: Seq[Long] = btableIdTuples.map(tuple => tuple._2).sorted
     val actualFromIds: Seq[Long] = actualIdTuples.map(tuple => tuple._2).sorted
-    val fromIdMap: Map[Long, Long] = (btableFromIds zip actualFromIds).toMap
-    println(s"fromIdMap = $fromIdMap")
+    val fromBtableToActualId: Map[Long, Long] = (btableFromIds zip actualFromIds).toMap
 
     val btableToIds: Seq[Long] = btableIdTuples.map(tuple => tuple._3).sorted
     val actualToIds: Seq[Long] = actualIdTuples.map(tuple => tuple._3).sorted
-    val toIdMap: Map[Long, Long] = (btableToIds zip actualToIds).toMap
-    println(s"toIdMap = $toIdMap")
+    val toBtableToActualId: Map[Long, Long] = (btableToIds zip actualToIds).toMap
 
-    actualIdTuples.foreach {
-      case (actualEdgeId, actualFromId, actualToId) =>
-        println(s"actualEdgeId = $actualEdgeId, actualFromId = $actualFromId, actualToId = $actualToId")
-        val btableEdgeId: Long = edgeIdMap(actualEdgeId)
-        val btableFromToIdTuple: (Long, Long) = btableTupleMap(btableEdgeId)
-        assert(fromIdMap(btableFromToIdTuple._1) == actualFromId)
-        assert(toIdMap(btableFromToIdTuple._2) == actualToId)
-    }
-
-    val headerWithoutIds: Seq[String] = actualHeader diff Seq(idCol, fromIdCol, toIdCol)
-    if (headerWithoutIds.nonEmpty)
-      compareDfs(
-        actualEdgeTable.data.select(headerWithoutIds.head, headerWithoutIds.tail: _*),
-        expectedTableColumnsRenamed.select(headerWithoutIds.head, headerWithoutIds.tail: _*))
+    override val collectedActualIds: Seq[Long] = actualEdgeIds
   }
 
-  private def equalVertexTables(actualTable: Table[DataFrame],
-                                expectedTable: Table[DataFrame]): Unit = {
-    assert(actualTable.name == expectedTable.name)
+  sealed case class EqEdge(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
+    extends EqEdgeBase(actualTable, expectedTable)
 
-    val expectedColumnsRenamed: Seq[String] =
-      expectedTable.data.columns.map(column => column.split("\\$")(1))
-    val expectedTableColumnsRenamed: DataFrame = expectedTable.data.toDF(expectedColumnsRenamed: _*)
-    val actualHeader: Seq[String] = actualTable.data.columns
-    compareHeaders(actualHeader, expectedTableColumnsRenamed)
+  sealed case class EqEdgeFromTo(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
+    extends EqEdgeBase(actualTable, expectedTable) {
 
-    val actualIds: Seq[Int] = actualTable.data.select(idCol).collect().map(_.getInt(0))
-    val baseId: Int =
-      START_BASE_TABLE_INDEX +
-        ((actualIds.head - START_BASE_TABLE_INDEX) / TABLE_INDEX_INCREMENT) * TABLE_INDEX_INCREMENT
-    val expectedIds: Seq[Int] = baseId until (baseId + actualIds.size)
-    assert(actualIds.size == actualIds.distinct.size)
-    assert(actualIds.toSet == expectedIds.toSet)
+    override def assertEqual(): Unit = {
+      super.assertEqual()
 
-    val headerWithoutId: Seq[String] = actualHeader diff Seq(idCol)
-    if (headerWithoutId.nonEmpty)
-      compareDfs(
-        actualTable.data.select(headerWithoutId.head, headerWithoutId.tail: _*),
-        expectedTableColumnsRenamed.select(headerWithoutId.head, headerWithoutId.tail: _*))
+      actualIdTuples.foreach {
+        case (actualEdgeId, actualFromId, actualToId) =>
+          val btableEdgeId: Long = edgeActualToBtableId(actualEdgeId)
+          val btableFromToIdTuple: (Long, Long) = btableTupleMap(btableEdgeId)
+          assert(fromBtableToActualId(btableFromToIdTuple._1) == actualFromId)
+          assert(toBtableToActualId(btableFromToIdTuple._2) == actualToId)
+      }
+    }
+  }
+
+  sealed case class EqEdgeFrom(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
+    extends EqEdgeBase(actualTable, expectedTable) {
+
+    override def assertEqual(): Unit = {
+      super.assertEqual()
+
+      actualIdTuples.foreach {
+        case (actualEdgeId, actualFromId, _) =>
+          val btableEdgeId: Long = edgeActualToBtableId(actualEdgeId)
+          val btableFromToIdTuple: (Long, Long) = btableTupleMap(btableEdgeId)
+          assert(fromBtableToActualId(btableFromToIdTuple._1) == actualFromId)
+      }
+    }
+  }
+
+  sealed case class EqFromTo(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
+    extends EqEdgeBase(actualTable, expectedTable) {
+
+    override def assertEqual(): Unit = {
+      super.assertEqual()
+
+      val btableFromToMap: Map[Long, Long] =
+        btableIdTuples.map(idTuple => idTuple._2 -> idTuple._3).toMap
+      val fromActualToBtableId: Map[Long, Long] = fromBtableToActualId.map(_.swap)
+      val toActualToBtableId: Map[Long, Long] = toBtableToActualId.map(_.swap)
+
+      actualIdTuples.foreach {
+        case (_, actualFromId, actualToId) =>
+          val btableFromId: Long = fromActualToBtableId(actualFromId)
+          val btableToId: Long = toActualToBtableId(actualToId)
+          assert(btableFromToMap(btableFromId) == btableToId)
+      }
+    }
   }
 
   /************************************** MATCH ***************************************************/
