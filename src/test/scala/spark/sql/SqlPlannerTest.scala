@@ -733,13 +733,13 @@ class SqlPlannerTest extends FunSuite
     assert(actualGraph.storedPathRestrictions == expectedGraph.storedPathRestrictions)
 
     // For each entity type, check that we have the expected tables.
-    checkTables(actualGraph.vertexData, expectedGraph.vertexData)
-    checkTables(actualGraph.edgeData, expectedGraph.edgeData)
-    checkTables(actualGraph.pathData, expectedGraph.pathData)
+    checkTables(actualGraph.vertexData, expectedGraph.vertexData, equalVertexTables)
+    checkTables(actualGraph.edgeData, expectedGraph.edgeData, equalEdgeTables)
   }
 
   private def checkTables(actualTables: Seq[Table[DataFrame]],
-                          expectedTables: Seq[Table[DataFrame]]): Unit = {
+                          expectedTables: Seq[Table[DataFrame]],
+                          equalFn: (Table[DataFrame], Table[DataFrame]) => Unit): Unit = {
     // Check we have the same number of tables as expected for this entity.
     assert(actualTables.size == expectedTables.size)
 
@@ -757,15 +757,12 @@ class SqlPlannerTest extends FunSuite
 
     // For each label, check that data correspond to the expected data.
     actualTableMap.foreach {
-      case (label, actualTable) => checkVertexTable(actualTable, expectedTableMap(label))
+      case (label, actualTable) => equalFn(actualTable, expectedTableMap(label))
     }
   }
 
-  private def checkEdgeTable(actualEdgeTable: Table[DataFrame],
-                             expectedEdgeTable: Table[DataFrame],
-                             edgeReference: Reference,
-                             fromReference: Reference,
-                             toReference: Reference): Unit = {
+  private def equalEdgeTables(actualEdgeTable: Table[DataFrame],
+                              expectedEdgeTable: Table[DataFrame]): Unit = {
     assert(actualEdgeTable.name == expectedEdgeTable.name)
 
     val expectedColumnsRenamed: Seq[String] =
@@ -775,38 +772,73 @@ class SqlPlannerTest extends FunSuite
     val actualHeader: Seq[String] = actualEdgeTable.data.columns
     compareHeaders(actualHeader, expectedTableColumnsRenamed)
 
-    // Expected edge table contains the binding table ids of the edge and endpoints.
-    val edgeIdCol: String = s"${edgeReference.refName}$$$idCol"
-    val fromIdCol: String = s"${fromReference.refName}$$$idCol"
-    val toIdCol: String = s"${toReference.refName}$$$idCol"
-    val edgeBtableIdCol: String = s"${edgeReference.refName}$$btable_id"
-    val fromBtableIdCol: String = s"${fromReference.refName}$$btable_id"
-    val toBtableIdCol: String = s"${toReference.refName}$$btable_id"
+    // Expected tables contain the binding table ids of the edge and endpoints. The construct ids of
+    // the edge and endpoints are assigned in the order of the edge ids in the binding table.
+    //
+    // btabtleIdTuples = [(edge_btable, from_btable, to_btable)]
+    // actualIdTuples = [(edge_actual, from_actual, to_actual)]
+    //
+    // edgeIdMap = [edge_actual.sorted -> edge_btable.sorted]
+    // btableTupleMap = [edge_btable -> (from_btable, to_btable)]
+    //
+    // btableFromIds = [from_btable].sorted
+    // actualFromIds = [from_actual].sorted
+    // btableToIds = [to_btable].sorted
+    // actualToIds = [to_actual].sorted
+    //
+    // fromIdMap = [from_btable -> from_actual]
+    // toIdMap = [to_btable -> to_actual]
 
-    val edgeAttrs: Seq[String] =
-      bindingTableSchema.fields.map(_.name).filter(_.startsWith(edgeReference.refName))
-    val fromAttrs: Seq[String] =
-      bindingTableSchema.fields.map(_.name).filter(_.startsWith(fromReference.refName))
-    val toAttrs: Seq[String] =
-      bindingTableSchema.fields.map(_.name).filter(_.startsWith(toReference.refName))
+    val btableIdTuples: Seq[(Int, Int, Int)] =
+      expectedTableColumnsRenamed
+        .select(idCol, fromIdCol, toIdCol)
+        .collect()
+        .map(row => (row.getInt(0), row.getInt(1), row.getInt(2)))
+    val actualIdTuples: Seq[(Int, Int, Int)] =
+      actualEdgeTable.data
+        .select(idCol, fromIdCol, toIdCol)
+        .collect()
+        .map(row => (row.getInt(0), row.getInt(1), row.getInt(2)))
 
-    val expectedEdgeTableBtableIds: DataFrame =
-      expectedEdgeTable.data
-        .withColumn(edgeBtableIdCol, expr(s"`$edgeIdCol`"))
-        .withColumn(fromBtableIdCol, expr(s"`$fromIdCol`"))
-        .withColumn(toBtableIdCol, expr(s"`$toIdCol`"))
-        .drop(edgeIdCol)
-        .drop(fromIdCol)
-        .drop(toIdCol)
-    val edgeTableJoin: DataFrame =
-      expectedEdgeTableBtableIds.join(
-        right = actualEdgeTable.data,
-        usingColumns = (edgeAttrs ++ fromAttrs ++ toAttrs) diff Seq(edgeIdCol, fromIdCol, toIdCol),
-        joinType = "INNER")
+    val btableEdgeIds: Seq[Int] = btableIdTuples.map(tuple => tuple._1)
+    val actualEdgeIds: Seq[Int] = actualIdTuples.map(tuple => tuple._1)
+
+    val baseId: Int =
+      START_BASE_TABLE_INDEX +
+        (actualEdgeIds.head - START_BASE_TABLE_INDEX) / TABLE_INDEX_INCREMENT *
+          TABLE_INDEX_INCREMENT
+    val expectedEdgeIds: Seq[Int] = baseId until (baseId + actualEdgeIds.size)
+    assert(actualEdgeIds.size == actualEdgeIds.distinct.size)
+    assert(actualEdgeIds.toSet == expectedEdgeIds.toSet)
+
+    val edgeIdMap: Map[Int, Int] = (actualEdgeIds.sorted zip btableEdgeIds.sorted).toMap
+    val btableTupleMap: Map[Int, (Int, Int)] =
+      btableIdTuples.map(tuple => tuple._1 -> (tuple._2, tuple._3)).toMap
+
+    val btableFromIds: Seq[Int] = btableIdTuples.map(tuple => tuple._2).sorted
+    val actualFromIds: Seq[Int] = actualIdTuples.map(tuple => tuple._2).sorted
+    val fromIdMap: Map[Int, Int] = (btableFromIds zip actualFromIds).toMap
+
+    val btableToIds: Seq[Int] = btableIdTuples.map(tuple => tuple._3).sorted
+    val actualToIds: Seq[Int] = actualIdTuples.map(tuple => tuple._3).sorted
+    val toIdMap: Map[Int, Int] = (btableToIds zip actualToIds).toMap
+
+    actualIdTuples.foreach {
+      case (actualEdgeId, actualFromId, actualToId) =>
+        val btableEdgeId: Int = edgeIdMap(actualEdgeId)
+        val btableFromToIdTuple: (Int, Int) = btableTupleMap(btableEdgeId)
+        assert(fromIdMap(btableFromToIdTuple._1) == actualFromId)
+        assert(toIdMap(btableFromToIdTuple._2) == actualToId)
+    }
+
+    val headerWithoutId: Seq[String] = actualHeader diff Seq(idCol, fromIdCol, toIdCol)
+    compareDfs(
+      actualEdgeTable.data.select(headerWithoutId.head, headerWithoutId.tail: _*),
+      expectedTableColumnsRenamed.select(headerWithoutId.head, headerWithoutId.tail: _*))
   }
 
-  private def checkVertexTable(actualTable: Table[DataFrame],
-                               expectedTable: Table[DataFrame]): Unit = {
+  private def equalVertexTables(actualTable: Table[DataFrame],
+                                expectedTable: Table[DataFrame]): Unit = {
     assert(actualTable.name == expectedTable.name)
 
     val expectedColumnsRenamed: Seq[String] =
@@ -826,8 +858,7 @@ class SqlPlannerTest extends FunSuite
     val headerWithoutId: Seq[String] = actualHeader diff Seq(idCol)
     compareDfs(
       actualTable.data.select(headerWithoutId.head, headerWithoutId.tail: _*),
-      expectedTableColumnsRenamed.select(headerWithoutId.head, headerWithoutId.tail: _*)
-    )
+      expectedTableColumnsRenamed.select(headerWithoutId.head, headerWithoutId.tail: _*))
   }
 
   /************************************** MATCH ***************************************************/
