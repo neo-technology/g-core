@@ -71,7 +71,7 @@ abstract class Catalog {
     unregisterGraph(graph.graphName)
 
   /** Checks whether a default graph has been defined for this database. */
-  def hasDefaultGraph: Boolean = registeredDefaultGraph.nonEmpty
+  def hasDefaultGraph: Boolean = registeredDefaultGraph != PathPropertyGraph.empty
 
   /** Returns the default [[PathPropertyGraph]] in this database. */
   def defaultGraph(): PathPropertyGraph = registeredDefaultGraph
