@@ -5,14 +5,33 @@ import algebra.operators.Column._
 import algebra.operators.{RemoveClause, SetClause}
 import algebra.target_api
 import algebra.target_api.{BindingTableMetadata, TargetTreeNode}
+import algebra.trees.BasicToGroupConstruct
 import org.apache.spark.sql.types._
 import spark.sql.SqlQuery
 import spark.sql.SqlQuery._
 
 import scala.collection.mutable
 
-// TODO: We should verify here again that the vertex does not end up with two labels. What happens
-// if we add two labels and remove one?
+/**
+  * Given a construct [[relation]], will select the necessary columns, possibly adding new ones,
+  * such that the result contains all the columns of the new entity denoted by its [[reference]] and
+  * possibly other columns as well, that will be needed in later stages of the creation process.
+  *
+  * New properties or labels for this entity can be added via the a [[SetClause]].
+  *
+  * Each new instance of this entity, denoted by a row in the construct [[relation]], will receives
+  * a unique, strictly increasing id. To this end, we use SQL's ROW_NUMBER() function applied over
+  * the [[relation]] ordered by the entity's previous id. The new column with consecutive ids is
+  * aliased with the [[constructIdColumn]] name.
+  *
+  * If this was an unmatched ([[isMatchedRef]] = false), but grouped ([[groupedAttributes]]
+  * non-empty) entity, we remove all the attributes of the [[relation]] that are not properties of
+  * the new entity, <b>except</b> for the [[groupedAttributes]]. For more details, see
+  * [[BasicToGroupConstruct]].
+  *
+  * TODO: The [[removeClause]] parameter is redundant and should be removed.
+  * TODO: Treat the case of multiple labels or missing labels.
+  */
 case class EntityConstruct(reference: Reference,
                            isMatchedRef: Boolean,
                            relation: TargetTreeNode,

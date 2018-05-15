@@ -8,6 +8,21 @@ import algebra.{target_api => target}
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 import spark.sql.SqlQuery
 
+/**
+  * Extracts the information of an edge denoted by its [[createRule.reference]] from the construct
+  * [[relation]].
+  *
+  * The identity of the edge is given by its id. All the rows containing the same id will contain
+  * the same values of its properties (the columns). Hence, to create the edge, we group the
+  * construct [[relation]] by the edge id column and use FIRST as the aggregation rule for all other
+  * columns holding edge information. By grouping, we ensure that the result contains unique edges.
+  *
+  * At this level in the construction process we also remove the properties and labels specified via
+  * the [[createRule.removeClause]].
+  *
+  * Note that the result still contains the label column, as this is needed later in the creation
+  * process of the graph.
+  */
 case class EdgeCreate(relation: TargetTreeNode,
                       createRule: target.EdgeCreate,
                       leftEndpointCreateRule: target.VertexCreate,

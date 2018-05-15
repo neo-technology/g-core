@@ -22,6 +22,11 @@ object SqlPlanner {
   val GRAPH_NAME_LENGTH: Int = 8
   val GROUP_CONSTRUCT_VIEW_PREFIX: String = "GroupConstruct"
 
+  /**
+    * A subset of the graph data produced by a [[GroupConstruct]]. As a CONSTRUCT clause is
+    * rewritten into multiple [[GroupConstruct]]s, we first collect the results of each of them,
+    * then create a [[SparkGraph]] from their union.
+    */
   sealed case class ConstructClauseData(vertexDataMap: Map[Reference, Table[DataFrame]],
                                         edgeDataMap: Map[Reference, Table[DataFrame]],
                                         edgeRestrictions: LabelRestrictionMap)
@@ -133,11 +138,13 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
       removeClause = entityConstruct.propAggRemoveClause)
   }
 
+  /** Translates the relation into a SQL query and runs it on Spark's SQL engine. */
   private def rewriteAndSolveBtableOps(relation: AlgebraTreeNode): DataFrame = {
     val sqlRelation: AlgebraTreeNode = rewriter.rewriteTree(relation)
     solveBtableOps(sqlRelation)
   }
 
+  /** Runs a physical plan on Spark's SQL engine. */
   private def solveBtableOps(relation: AlgebraTreeNode): DataFrame = {
     logger.info("\nSolving\n{}", relation.treeString())
     val btableMetadata: SqlBindingTableMetadata =
@@ -146,6 +153,7 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     data
   }
 
+  /** Extracts a subset of a graph's data by solving a [[GroupConstruct]] clause. */
   private def solveConstructClause(constructClause: AlgebraTreeNode): ConstructClauseData = {
     // The root of each tree is a GroupConstruct.
     val groupConstruct: GroupConstruct = constructClause.asInstanceOf[GroupConstruct]
@@ -207,11 +215,11 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
 
       val vertexRefToDataMap: Map[Reference, Table[DataFrame]] =
         vertexSqlCreates
-          .map(vertexCreate => vertexCreate.createRule.reference -> createSchemaTable(vertexCreate))
+          .map(vertexCreate => vertexCreate.createRule.reference -> createTable(vertexCreate))
           .toMap
       val edgeRefToDataMap: Map[Reference, Table[DataFrame]] =
         edgeSqlCreates
-          .map(edgeCreate => edgeCreate.createRule.reference -> createSchemaTable(edgeCreate))
+          .map(edgeCreate => edgeCreate.createRule.reference -> createTable(edgeCreate))
           .toMap
 
       val edgeFromToMap: Map[Reference, (Reference, Reference)] =
@@ -246,21 +254,33 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
     }
   }
 
-  private def createSchemaTable(edgeCreate: sql.EdgeCreate): Table[DataFrame] = {
+  private def createTable(edgeCreate: sql.EdgeCreate): Table[DataFrame] = {
     val edgeRef: Reference = edgeCreate.createRule.reference
     val edgeData: DataFrame = solveBtableOps(edgeCreate)
-    val edgeTable: Table[DataFrame] = createSchemaTable(edgeRef, edgeData)
+    val edgeTable: Table[DataFrame] = createTable(edgeRef, edgeData)
     edgeTable
   }
 
-  private def createSchemaTable(vertexCreate: sql.VertexCreate): Table[DataFrame] = {
+  private def createTable(vertexCreate: sql.VertexCreate): Table[DataFrame] = {
     val vertexRef: Reference = vertexCreate.createRule.reference
     val vertexData: DataFrame = solveBtableOps(vertexCreate)
-    val vertexTable: Table[DataFrame] = createSchemaTable(vertexRef, vertexData)
+    val vertexTable: Table[DataFrame] = createTable(vertexRef, vertexData)
     vertexTable
   }
 
-  private def createSchemaTable(reference: Reference, data: DataFrame): Table[DataFrame] = {
+  /**
+    * Creates a [[Table]] from a [[DataFrame]] containing only the properties of an entity.
+    *
+    * The [[Table.name]] will be the first value found on the [[tableLabelColumn]], as we make the
+    * assumption that all the values on this column are equal. Note: The [[tableLabelColumn]] is
+    * added during a scan ([[VertexScan]], [[EdgeScan]] or [[PathScan]]) as a constant, or added
+    * in the [[EntityConstruct]] step, also as a constant column.
+    *
+    * The [[Table.data]] is the same as the provided data parameter, minus the [[tableLabelColumn]].
+    * The columns are renamed by removing the "reference$" prefix from the provided data's column
+    * names.
+    */
+  private def createTable(reference: Reference, data: DataFrame): Table[DataFrame] = {
     val labelColumnSelect: String = s"${reference.refName}$$${tableLabelColumn.columnName}"
     val labelColumn: String = data.select(labelColumnSelect).first.getString(0)
     val newDataColumnNames: Seq[String] =

@@ -7,6 +7,34 @@ import algebra.target_api.{BindingTableMetadata, TargetTreeNode}
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 import spark.sql.SqlQuery
 
+/**
+  * Projects the [[attributes]] from the given [[relation]].
+  *
+  * An entity in the graph is uniquely represented by its id. The attributes to project are given as
+  * a sequence of [[Reference]]s - the entity names. Thus, we distinguish between three types of
+  * attributes in the context of the [[Project]] operator:
+  *
+  * (1) There is a set of columns already present in the [[relation]] that represents the
+  * [[Reference]]'s properties. The set of columns also includes the [[idColumn]]. In this case, the
+  * result of the [[Project]]ion is the SQL SELECT-ion of the columns in the said set. This case
+  * occurs when projecting a matched variable.
+  *
+  * (2) There is a set of columns already present in the [[relation]] that represents the
+  * [[Reference]]'s properties. The set of columns does <b>not</b> include the [[idColumn]]. In this
+  * case, the result of the [[Project]]ion is the SQL SELECT-ion of the columns in the said set,
+  * plus a new column aliased as the [[idColumn]], filled in with MONOTONICALLY_INCREASING_IDs, to
+  * ensure the id of each entity instance is uniquely keyed. This case occurs when projecting an
+  * unmatched variable that contained grouping with aggregation. The aggregation is solved as a
+  * temporary property of the variable, that is removed at [[VertexCreate]] or [[EdgeCreate]] level.
+  * The aggregated property is added at the [[GroupBy]] level. The [[Project]]ion occurs between the
+  * two.
+  *
+  * (3) There is no column in the [[relation]] to represent a property of the [[Reference]]'s. In
+  * this case, the result of the [[Project]]ion is the SQL SELECT-ion of a column aliased as
+  * [[idColumn]] filled in with MONOTONICALLY_INCREASING_IDs, to ensure the id of each entity
+  * instance is uniquely keyed. This case occurs when projecting an unmatched variable with no
+  * grouping, or an unmatched variable with grouping, but no aggregation.
+  */
 case class Project(relation: TargetTreeNode, attributes: Seq[Reference])
   extends target_api.Project(relation, attributes) {
 

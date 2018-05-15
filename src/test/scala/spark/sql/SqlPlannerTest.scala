@@ -16,6 +16,7 @@ import schema.Catalog.{START_BASE_TABLE_INDEX, TABLE_INDEX_INCREMENT}
 import schema.EntitySchema.LabelRestrictionMap
 import schema.{Catalog, SchemaMap, Table}
 import spark._
+import spark.sql.operators.EntityConstruct
 
 /**
   * Verifies that the [[SqlPlanner]] creates correct [[DataFrame]] binding tables and constructs the
@@ -971,6 +972,13 @@ class SqlPlannerTest extends FunSuite
     }
   }
 
+  /**
+    * Base equals-like operator to test that two [[DataFrame]] [[Table]]s are equal. The operator
+    * checks that the actual and expected [[Table.name]]s are equal, that the actual and expected
+    * headers are equal, that there is a correct number of unique ids as an id interval and that
+    * the data contained by the two [[Table]]s is equal. Note that the [[idColumn]] does not
+    * participate in the data equality test.
+    */
   sealed abstract class EqBase(actualTable: Table[DataFrame],
                                expectedTable: Table[DataFrame],
                                idColumnNames: Seq[String]) {
@@ -1012,9 +1020,11 @@ class SqlPlannerTest extends FunSuite
     }
   }
 
+  /** The equals-like operator to test that two vertex [[Table]]s are equal. */
   sealed case class EqVertex(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
     extends EqBase(actualTable, expectedTable, Seq(idCol))
 
+  /** The base equals-like operator to test the equality of two edge [[Table]]s. */
   sealed abstract class EqEdgeBase(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
     extends EqBase(actualTable, expectedTable, Seq(idCol, fromIdCol, toIdCol)) {
 
@@ -1052,6 +1062,67 @@ class SqlPlannerTest extends FunSuite
   sealed case class EqEdge(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
     extends EqEdgeBase(actualTable, expectedTable)
 
+  /**
+    * An [[EqEdgeBase]] operator that also checks whether the correlation between edge, source and
+    * destination ids is the same in the actual and expected tables. Should be used when testing
+    * CONSTRUCT clauses in which both endpoints and the edge variables have been matched.
+    *
+    * The expected table is built from the binding table, therefore the edge and source and
+    * destination endpoint ids are the same as in the binding table. The endpoint ids are strictly
+    * determined by the edge id - each unique edge id determines a unique pair of endpoint ids. The
+    * same applies to the actual table.
+    *
+    * Furthermore, we know, from the creation process of an entity, that the new ids of each entity
+    * are assigned in the order of the original binding table ids (see [[EntityConstruct]]). This
+    * means we can create a mapping between the binding table ids and the actual ids, from the
+    * ordering of the two.
+    *
+    * Using the two mapping, edge to endpoints and binding table edge to actual edge, we can test
+    * whether, for a given actual edge id, the actual ids of the endpoints indeed map to the
+    * binding table id of that edge.
+    *
+    * For example, we infer the following mapping from the binding and actual table:
+    * edge_id_btable -> (source_id_btable, dest_id_btable) =
+    *   200 -> (100, 101),
+    *   201 -> (102, 103),
+    *   202 -> (104, 105)
+    * edge_id_actual -> (source_id_actual, dest_id_actual) =
+    *   2000 -> (1000, 1001),
+    *   2001 -> (1002, 1003),
+    *   2002 -> (1004, 1005)
+    *
+    * Then:
+    * edge_id_btable = {200, 201, 202}
+    * edge_id_actual = {2000, 2001, 2002}
+    * Which means: edge_id_actual -> edge_id_btable =
+    *   2000 -> 200
+    *   2001 -> 201
+    *   2002 -> 202
+    *
+    *
+    * source_id_btable = {100, 102, 104}
+    * source_id_actual = {1000, 1002, 1004}
+    * Which means: source_id_btable -> source_id_actual =
+    *   100 -> 1000
+    *   102 -> 1002
+    *   104 -> 1004
+    *
+    * dest_id_btable = {101, 103, 105}
+    * dest_id_actual = {1001, 1003, 1005}
+    * Which means: dest_id_btable -> dest_id_actual =
+    *   101 -> 1001
+    *   103 -> 1003
+    *   105 -> 1005
+    *
+    * Then, for each tuple (edge_id_actual, source_id_actual, dest_id_actual):
+    * - we extract the edge_id_btable from the edge_id_actual -> edge_id_btable mapping;
+    * - we extract source_id_btable and dest_id_btable from the
+    * edge_id_btable -> (source_id_btable, dest_id_btable) mapping;
+    * - we extract expected_source_id and expected_dest_id from the
+    * source_id_btable -> source_id_actual and dest_id_btable -> dest_id_actual, respectively;
+    * - we assert that expected_source_id == source_id_actual and
+    * expected_dest_id == dest_id_actual.
+    */
   sealed case class EqEdgeFromTo(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
     extends EqEdgeBase(actualTable, expectedTable) {
 
@@ -1068,6 +1139,11 @@ class SqlPlannerTest extends FunSuite
     }
   }
 
+  /**
+    * Same as [[EqEdgeFromTo]], though we only check the correlation between the edge and the source
+    * ids. Should be used when testing CONSTRUCT clauses in which the source endpoint and the edge
+    * variables have been matched.
+    */
   sealed case class EqEdgeFrom(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
     extends EqEdgeBase(actualTable, expectedTable) {
 
@@ -1083,6 +1159,11 @@ class SqlPlannerTest extends FunSuite
     }
   }
 
+  /**
+    * Same as [[EqEdgeFromTo]], though we only check the correlation between the source and the
+    * destination ids. Should be used when testing CONSTRUCT clauses in which the source and
+    * destinations variables have been matched.
+    */
   sealed case class EqFromTo(actualTable: Table[DataFrame], expectedTable: Table[DataFrame])
     extends EqEdgeBase(actualTable, expectedTable) {
 
