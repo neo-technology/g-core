@@ -6,7 +6,7 @@ import algebra.operators.Column._
 import algebra.operators._
 import algebra.trees.{AlgebraContext, AlgebraTreeNode}
 import compiler.CompileContext
-import org.apache.spark.sql.functions.{avg, expr, first, lit, monotonically_increasing_id}
+import org.apache.spark.sql.functions.{avg, expr, first, lit}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row}
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, FunSuite}
@@ -19,9 +19,9 @@ import spark._
 
 /**
   * Verifies that the [[SqlPlanner]] creates correct [[DataFrame]] binding tables and constructs the
-  * expected [[SparkGraph]]s. The test also assert that the implementation of the physical operators
-  * with Spark produces the expected results. The operators are not tested individually - we only
-  * look at the results obtained by running the code produced by these operators.
+  * expected [[SparkGraph]]s. The tests also assert that the implementation of the physical
+  * operators with Spark produces the expected results. The operators are not tested individually -
+  * we only look at the results obtained by running the code produced by these operators.
   */
 class SqlPlannerTest extends FunSuite
   with TestGraph with BeforeAndAfterEach with BeforeAndAfterAll with SparkSessionTestWrapper {
@@ -108,7 +108,7 @@ class SqlPlannerTest extends FunSuite
   }
 
   // For now, we are not checking graph name, so we assign a random one.
-  val TEMP_GRAPH_NAME: String = "foo"
+  val FOO_GRAPH_NAME: String = "foo"
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
@@ -126,7 +126,7 @@ class SqlPlannerTest extends FunSuite
     val vertex = extractConstructClauses("CONSTRUCT (c) MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -139,9 +139,8 @@ class SqlPlannerTest extends FunSuite
           name = Label("Cat"),
           data = {
             // All columns of c are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           }
         )
       )
@@ -157,7 +156,7 @@ class SqlPlannerTest extends FunSuite
       extractConstructClauses("CONSTRUCT (c {dw := 2 * c.weight}) SET c.constInt := 1 MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -169,10 +168,9 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
             bindingTable
-              .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+              .select(columns.head, columns.tail: _*)
               .withColumn("c$constInt", lit(1))
               .withColumn("c$dw", expr("2 * `c$weight`"))
           }
@@ -190,7 +188,7 @@ class SqlPlannerTest extends FunSuite
     val vertex = extractConstructClauses("CONSTRUCT (c) REMOVE c.onDiet REMOVE c:Cat MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -202,10 +200,9 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"), // TODO: Change this label to the actual one.
           data = {
-            val bindingTableColumns: Seq[String] =
+            val columns =
               bindingTable.columns.filter(_.startsWith("c")) diff Seq("c$onDiet", s"c$labelCol")
-            bindingTable
-              .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            bindingTable.select(columns.head, columns.tail: _*)
           }
         )
       )
@@ -220,7 +217,7 @@ class SqlPlannerTest extends FunSuite
     val vertex = extractConstructClauses("CONSTRUCT (c) WHEN c.age >= 5 MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -232,13 +229,9 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable
-              .select(bindingTableColumns.head, bindingTableColumns.tail: _*)
-              .filter("`c$age` >= 5")
-          }
-        )
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*).where("`c$age` >= 5")
+          })
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq.empty
@@ -251,7 +244,7 @@ class SqlPlannerTest extends FunSuite
     val vertex = extractConstructClauses("CONSTRUCT (x) MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -262,12 +255,7 @@ class SqlPlannerTest extends FunSuite
       override def vertexData: Seq[Table[DataFrame]] = Seq(
         Table(
           name = Label("Xlabel"),
-          data = {
-            bindingTable
-              .withColumn(s"x$$$idCol", lit(1))
-              .select(s"x$$$idCol")
-          }
-        )
+          data = bindingTable.withColumn(s"x$$$idCol", lit(1)).select(s"x$$$idCol"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq.empty
@@ -280,7 +268,7 @@ class SqlPlannerTest extends FunSuite
     val vertex = extractConstructClauses("CONSTRUCT (x :XLabel {constInt := 1}) MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -291,13 +279,11 @@ class SqlPlannerTest extends FunSuite
       override def vertexData: Seq[Table[DataFrame]] = Seq(
         Table(
           name = Label("XLabel"),
-          data = {
+          data =
             bindingTable
               .withColumn(s"x$$$idCol", lit(1))
               .withColumn("x$constInt", lit(1))
-              .select(s"x$$$idCol", "x$constInt")
-          }
-        )
+              .select(s"x$$$idCol", "x$constInt"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq.empty
@@ -311,7 +297,7 @@ class SqlPlannerTest extends FunSuite
     val vertex = extractConstructClauses("CONSTRUCT (x GROUP c.onDiet :XLabel) MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -322,14 +308,12 @@ class SqlPlannerTest extends FunSuite
       override def vertexData: Seq[Table[DataFrame]] = Seq(
         Table(
           name = Label("XLabel"),
-          data = {
+          data =
             bindingTable
               .groupBy("c$onDiet")
               .agg(first(s"c$$$idCol"))
               .withColumn(s"x$$$idCol", lit(1))
-              .select(s"x$$$idCol")
-          }
-        )
+              .select(s"x$$$idCol"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq.empty
@@ -345,7 +329,7 @@ class SqlPlannerTest extends FunSuite
         "CONSTRUCT (x GROUP c.onDiet :XLabel {avgw := AVG(c.weight)}) MATCH (c)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, vertex)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -356,14 +340,12 @@ class SqlPlannerTest extends FunSuite
       override def vertexData: Seq[Table[DataFrame]] = Seq(
         Table(
           name = Label("XLabel"),
-          data = {
+          data =
             bindingTable
               .groupBy("c$onDiet")
               .agg(avg("c$weight") as "x$avgw")
               .withColumn(s"x$$$idCol", lit(1))
-              .select(s"x$$$idCol", "x$avgw")
-          }
-        )
+              .select(s"x$$$idCol", "x$avgw"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq.empty
@@ -375,7 +357,7 @@ class SqlPlannerTest extends FunSuite
     val edge = extractConstructClauses("CONSTRUCT (c)-[e]->(f) MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -389,16 +371,14 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           }),
         Table(
           name = Label("Food"),
           data = {
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           })
       )
 
@@ -406,9 +386,8 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Eats"),
           data = {
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("e")) diff Seq(s"e$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("e")) diff Seq(s"e$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           })
       )
     }
@@ -420,11 +399,10 @@ class SqlPlannerTest extends FunSuite
     "CONSTRUCT (c)-[e]->(b) MATCH (c)-[e]->(f)") {
     val edge = extractConstructClauses("CONSTRUCT (c)-[e]->(b :BLabel) MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
-    // Add b's columns and substitute e$fromId with b$id.
     val expectedBtable = bindingTable.withColumn(s"b$$$idCol", lit(1))
 
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -438,10 +416,8 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            // All columns of c are preserved.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           }),
         Table(
           name = Label("BLabel"),
@@ -452,10 +428,8 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Eats"),
           data = {
-            // All columns of e are preserved.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("e")) diff Seq(s"e$$$labelCol")
-            expectedBtable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("e")) diff Seq(s"e$$$labelCol")
+            expectedBtable.select(columns.head, columns.tail: _*)
           })
       )
     }
@@ -474,7 +448,7 @@ class SqlPlannerTest extends FunSuite
         .withColumn(s"b$$$idCol", lit(2))
 
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -498,8 +472,8 @@ class SqlPlannerTest extends FunSuite
           name = Label("Eats"),
           data = {
             // All columns of e are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] = expectedBtable.columns.filter(_.startsWith("e"))
-            expectedBtable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = expectedBtable.columns.filter(_.startsWith("e"))
+            expectedBtable.select(columns.head, columns.tail: _*)
           })
       )
     }
@@ -512,7 +486,7 @@ class SqlPlannerTest extends FunSuite
     val edge = extractConstructClauses("CONSTRUCT (c)-[x :XLabel]-(f) MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -526,18 +500,15 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            // All columns of c are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           }),
         Table(
           name = Label("Food"),
           data = {
             // All columns of f are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           })
       )
 
@@ -570,7 +541,7 @@ class SqlPlannerTest extends FunSuite
         .withColumn(s"x$$$toIdCol", expr(s"`b$$$idCol`"))
 
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -592,9 +563,7 @@ class SqlPlannerTest extends FunSuite
       override def edgeData: Seq[Table[DataFrame]] = Seq(
         Table(
           name = Label("XLabel"),
-          data = {
-            expectedBtable.select(s"x$$$idCol", s"x$$$fromIdCol", s"x$$$toIdCol")
-          })
+          data = expectedBtable.select(s"x$$$idCol", s"x$$$fromIdCol", s"x$$$toIdCol"))
       )
     }
     checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
@@ -608,7 +577,7 @@ class SqlPlannerTest extends FunSuite
         "CONSTRUCT (c)-[x]->(d GROUP c.onDiet) MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -623,19 +592,17 @@ class SqlPlannerTest extends FunSuite
           name = Label("Cat"),
           data = {
             // All columns of c are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           }),
         Table(
           name = Label("DLabel"),
-          data = {
+          data =
             bindingTable
               .groupBy("c$onDiet")
               .agg(first(s"c$$$idCol"))
               .withColumn(s"d$$$idCol", lit(1))
-              .select(s"d$$$idCol")
-          })
+              .select(s"d$$$idCol"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq(
@@ -661,7 +628,7 @@ class SqlPlannerTest extends FunSuite
           "MATCH (c)-[e]->(f)")
     val actualGraph = sparkPlanner.constructGraph(bindingTable, edge)
     val expectedGraph = new SparkGraph {
-      override def graphName: String = TEMP_GRAPH_NAME
+      override def graphName: String = FOO_GRAPH_NAME
 
       override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
 
@@ -675,21 +642,18 @@ class SqlPlannerTest extends FunSuite
         Table(
           name = Label("Cat"),
           data = {
-            // All columns of c are preserved, except for the label column.
-            val bindingTableColumns: Seq[String] =
-              bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
-            bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*)
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
           }),
         Table(
           name = Label("Boolean"),
-          data = {
+          data =
             bindingTable
               .groupBy("c$onDiet")
               .agg(first(s"c$$$idCol"))
               .withColumn(s"d$$$idCol", lit(1))
               .withColumn("d$val", expr("`c$onDiet`"))
-              .select(s"d$$$idCol", "d$val")
-          })
+              .select(s"d$$$idCol", "d$val"))
       )
 
       override def edgeData: Seq[Table[DataFrame]] = Seq(
@@ -706,7 +670,7 @@ class SqlPlannerTest extends FunSuite
     checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
   }
 
-  // TODO: Remove label of e0, once we fix the issue with the labels.
+  // TODO: Remove label of e0, c1, f1, once we fix the issue with the labels.
   test("EdgeCreate from duplicate pairs of endpoints, check implicit grouping is used - " +
     "CONSTRUCT (c1)-[e0]->(f1) MATCH (c1)-[e1]->(f1), (c2)-[e2]->(f2) (cross-join of patterns)") {
     val edge =
@@ -728,108 +692,233 @@ class SqlPlannerTest extends FunSuite
     assert(e0ids.toSet.size == vertexGroups.size)
   }
 
-//  test("GroupConstruct of bound endpoints, unbound edges - " +
-//    "CONSTRUCT (c)-[e0]->(f)-[e1]->(c) MATCH (c)-[e]->(f)") {
-//    val group = extractConstructClauses("CONSTRUCT (c)-[e0]->(f)-[e1]->(c) MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, group).head
-//
-//    // All columns from the binding table are preserved + the new columns for edges e0 and e1.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//    val expectedHeader: Seq[String] = bindingTableColumns ++ Seq(s"e0$$$idCol", s"e1$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Compare the part of the binding table that remains constant.
-//    compareDfs(
-//      actualDf.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
-//      bindingTable.select(bindingTableColumns.head, bindingTableColumns.tail: _*))
-//
-//    // Check that each new edge receives a unique id.
-//    val e0ids = actualDf.select(s"e0$$$idCol").collect().map(_(0))
-//    assert(e0ids.toSet.size == bindingTableData.size)
-//
-//    val e1ids = actualDf.select(s"e1$$$idCol").collect().map(_(0))
-//    assert(e1ids.toSet.size == bindingTableData.size)
-//  }
-//
-//  test("GroupConstruct, add one vertex between matched endpoints - " +
-//    "CONSTRUCT (c)-[e0]->(x)-[e1]->(f) MATCH (c)-[e]->(f)") {
-//    val group = extractConstructClauses("CONSTRUCT (c)-[e0]->(x)-[e1]->(f) MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, group).head
-//
-//    // All columns from the binding table are preserved + the new columns for edges e0 and e1 and
-//    // vertex x.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//    val expectedHeader: Seq[String] =
-//      bindingTableColumns ++ Seq(s"e0$$$idCol", s"e1$$$idCol", s"x$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Skip common binding table comparison, as it was tested before. Only check that each new edge
-//    // and the new vertex receive a unique id.
-//    val e0ids = actualDf.select(s"e0$$$idCol").collect().map(_(0))
-//    assert(e0ids.toSet.size == bindingTableData.size)
-//
-//    val e1ids = actualDf.select(s"e1$$$idCol").collect().map(_(0))
-//    assert(e1ids.toSet.size == bindingTableData.size)
-//
-//    val xids = actualDf.select(s"x$$$idCol").collect().map(_(0))
-//    assert(xids.toSet.size == bindingTableData.size)
-//  }
-//
-//  test("GroupConstruct with GROUP-ing - " +
-//    "CONSTRUCT (d GROUP c.onDiet)<-(c)->(f) MATCH (c)-[e]->(f)") {
-//    val group =
-//      extractConstructClauses("CONSTRUCT (d GROUP c.onDiet)<-[e0]-(c)-[e1]->(f) MATCH (c)-[e]->(f)")
-//    val actualDf = sparkPlanner.constructGraph(bindingTable, group).head
-//
-//    // All columns from the binding table are preserved + the new columns for edges e0 and e1 and
-//    // vertex d.
-//    val bindingTableColumns: Seq[String] = bindingTableSchema.fields.map(_.name)
-//    val expectedHeader: Seq[String] =
-//      bindingTableColumns ++ Seq(s"e0$$$idCol", s"e1$$$idCol", s"d$$$idCol")
-//    compareHeaders(expectedHeader, actualDf)
-//
-//    // Check that each new edge received a unique id.
-//    val e0ids = actualDf.select(s"e0$$$idCol").collect().map(_(0))
-//    assert(e0ids.toSet.size == bindingTableData.size)
-//
-//    val e1ids = actualDf.select(s"e1$$$idCol").collect().map(_(0))
-//    assert(e1ids.toSet.size == bindingTableData.size)
-//
-//    // Check that vertex d only received as many ids as there are groupings by c.onDiet.
-//    val xids = actualDf.select(s"d$$$idCol").collect().map(_(0))
-//    assert(xids.toSet.size == bindingTableData.groupBy(_.onDiet).size)
-//  }
-//
-//  test("GroupConstruct of the same vertex with contradicting filtering yields the empty table - " +
-//    "CONSTRUCT (c) WHEN c.age <= 3, (c) WHEN c.age > 3 MATCH (c)") {
-//    val group =
-//      extractConstructClauses(
-//        query = "CONSTRUCT (c) WHEN c.age <= 3, (c) WHEN c.age > 3 MATCH (c)",
-//        expectedNumClauses = 1) // one clause, both BasicConstructs are on the same vertex
-//    val actualDfs = sparkPlanner.constructGraph(bindingTable, group)
-//    assert(actualDfs.head.rdd.isEmpty())
-//  }
-//
-//  test("GroupConstruct of two vertices, with filtering - " +
-//    "CONSTRUCT (c) WHEN c.age <= 3, (f) WHEN c.age <= 3 MATCH (c)-[e]->(f)") {
-//    val group =
-//      extractConstructClauses(
-//        query = "CONSTRUCT (c) WHEN c.age <= 3, (f) WHEN c.age <= 3 MATCH (c)-[e]->(f)",
-//        expectedNumClauses = 2)
-//    val actualDfs = sparkPlanner.constructGraph(bindingTable, group)
-//
-//    // Check that the two tables have the correct elements.
-//    val bindingTableColumns: Seq[String] =
-//      bindingTableSchema.fields.map(_.name).filter(_.startsWith("c"))
-//    val expectedBelowThree = bindingTable.select("*").where("`c$age` <= 3")
-//
-//    compareDfs(
-//      actualDfs.head.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
-//      expectedBelowThree.select(bindingTableColumns.head, bindingTableColumns.tail: _*))
-//    compareDfs(
-//      actualDfs.last.select(bindingTableColumns.head, bindingTableColumns.tail: _*),
-//      expectedBelowThree.select(bindingTableColumns.head, bindingTableColumns.tail: _*))
-//  }
+  // TODO: Remove label of e0, e1 once we fix the issue with the labels.
+  test("GroupConstruct of bound endpoints, two unbound edges - " +
+    "CONSTRUCT (c)-[e0]->(f)-[e1]->(c) MATCH (c)-[e]->(f)") {
+    val group =
+      extractConstructClauses(
+        "CONSTRUCT (c)-[e0 :e0Label]->(f)-[e1 :e1Label]->(c) MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, group)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = FOO_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(
+          Label("e0Label") -> (Label("Cat"), Label("Food")),
+          Label("e1Label") -> (Label("Food"), Label("Cat")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
+          }),
+        Table(
+          name = Label("Food"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
+          })
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("e0Label"),
+          data =
+            bindingTable
+              .withColumn(s"e0$$$idCol", lit(1))
+              .withColumn(s"e0$$$fromIdCol", expr(s"`e$$$fromIdCol`"))
+              .withColumn(s"e0$$$toIdCol", expr(s"`e$$$toIdCol`"))
+              .select(s"e0$$$idCol", s"e0$$$fromIdCol", s"e0$$$toIdCol")),
+        Table(
+          name = Label("e1Label"),
+          data =
+            bindingTable
+              .withColumn(s"e1$$$idCol", lit(1))
+              .withColumn(s"e1$$$fromIdCol", expr(s"`e$$$toIdCol`"))
+              .withColumn(s"e1$$$toIdCol", expr(s"`e$$$fromIdCol`"))
+              .select(s"e1$$$idCol", s"e1$$$fromIdCol", s"e1$$$toIdCol"))
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqFromTo))
+  }
+
+  // TODO: Remove label of e0, e1, x once we fix the issue with the labels.
+  test("GroupConstruct, add one vertex between matched endpoints - " +
+    "CONSTRUCT (c)-[e0]->(x)-[e1]->(f) MATCH (c)-[e]->(f)") {
+    val group = extractConstructClauses(
+      "CONSTRUCT (c)-[e0 :e0Label]->(x :XLabel)-[e1 :e1Label]->(f) MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, group)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = FOO_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(
+          Label("e0Label") -> (Label("Cat"), Label("XLabel")),
+          Label("e1Label") -> (Label("XLabel"), Label("Food")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
+          }),
+        Table(
+          name = Label("Food"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
+          }),
+        Table(
+          name = Label("XLabel"),
+          data = bindingTable.withColumn(s"x$$$idCol", lit(1)).select(s"x$$$idCol"))
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("e0Label"),
+          data =
+            bindingTable
+              .withColumn(s"e0$$$idCol", lit(1))
+              .withColumn(s"e0$$$fromIdCol", expr(s"`e$$$fromIdCol`"))
+              .withColumn(s"e0$$$toIdCol", expr(s"`e$$$toIdCol`"))
+              .select(s"e0$$$idCol", s"e0$$$fromIdCol", s"e0$$$toIdCol")),
+        Table(
+          name = Label("e1Label"),
+          data =
+            bindingTable
+              .withColumn(s"e1$$$idCol", lit(1))
+              .withColumn(s"e1$$$fromIdCol", expr(s"`e$$$toIdCol`"))
+              .withColumn(s"e1$$$toIdCol", expr(s"`e$$$fromIdCol`"))
+              .select(s"e1$$$idCol", s"e1$$$fromIdCol", s"e1$$$toIdCol"))
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
+  }
+
+  // TODO: Remove label of e0, e1, d once we fix the issue with the labels.
+  test("GroupConstruct with GROUP-ing - " +
+    "CONSTRUCT (d GROUP c.onDiet)<-(c)->(f) MATCH (c)-[e]->(f)") {
+    val group =
+      extractConstructClauses(
+        "CONSTRUCT (d GROUP c.onDiet :DLabel)<-[e0 :e0Label]-(c)-[e1 :e1Label]->(f) " +
+          "MATCH (c)-[e]->(f)")
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, group)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = FOO_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap(
+        Map(
+          Label("e0Label") -> (Label("Cat"), Label("DLabel")),
+          Label("e1Label") -> (Label("Cat"), Label("Food")))
+      )
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
+          }),
+        Table(
+          name = Label("Food"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*)
+          }),
+        Table(
+          name = Label("DLabel"),
+          data =
+            bindingTable
+              .groupBy("c$onDiet")
+              .agg(first(s"c$$$idCol"))
+              .withColumn(s"d$$$idCol", lit(1))
+              .select(s"d$$$idCol"))
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("e0Label"),
+          data =
+            bindingTable
+              .withColumn(s"e0$$$idCol", lit(1))
+              .withColumn(s"e0$$$fromIdCol", expr(s"`e$$$toIdCol`"))
+              .withColumn(s"e0$$$toIdCol", expr(s"`e$$$fromIdCol`"))
+              .select(s"e0$$$idCol", s"e0$$$fromIdCol", s"e0$$$toIdCol")),
+        Table(
+          name = Label("e1Label"),
+          data =
+            bindingTable
+              .withColumn(s"e1$$$idCol", lit(1))
+              .withColumn(s"e1$$$fromIdCol", expr(s"`e$$$fromIdCol`"))
+              .withColumn(s"e1$$$toIdCol", expr(s"`e$$$toIdCol`"))
+              .select(s"e1$$$idCol", s"e1$$$fromIdCol", s"e1$$$toIdCol"))
+      )
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph, Some(EqEdge))
+  }
+
+  test("GroupConstruct of the same vertex with contradicting filtering yields the empty table - " +
+    "CONSTRUCT (c) WHEN c.age <= 3, (c) WHEN c.age > 3 MATCH (c)") {
+    val group =
+      extractConstructClauses(
+        query = "CONSTRUCT (c) WHEN c.age <= 3, (c) WHEN c.age > 3 MATCH (c)",
+        expectedNumClauses = 1) // one clause, both BasicConstructs are on the same vertex
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, group)
+    assert(actualGraph.isEmpty)
+  }
+
+  test("GroupConstruct of two vertices, with filtering - " +
+    "CONSTRUCT (c) WHEN c.age <= 3, (f) WHEN c.age <= 3 MATCH (c)-[e]->(f)") {
+    val group =
+      extractConstructClauses(
+        query = "CONSTRUCT (c) WHEN c.age <= 3, (f) WHEN c.age <= 3 MATCH (c)-[e]->(f)",
+        expectedNumClauses = 2)
+    val actualGraph = sparkPlanner.constructGraph(bindingTable, group)
+    val expectedGraph = new SparkGraph {
+      override def graphName: String = FOO_GRAPH_NAME
+
+      override def storedPathRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def edgeRestrictions: LabelRestrictionMap = SchemaMap.empty
+
+      override def pathData: Seq[Table[DataFrame]] = Seq.empty
+
+      override def vertexData: Seq[Table[DataFrame]] = Seq(
+        Table(
+          name = Label("Cat"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("c")) diff Seq(s"c$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*).where("`c$age` <= 3")
+          }),
+        Table(
+          name = Label("Food"),
+          data = {
+            val columns = bindingTable.columns.filter(_.startsWith("f")) diff Seq(s"f$$$labelCol")
+            bindingTable.select(columns.head, columns.tail: _*).where("`c$age` <= 3")
+          })
+      )
+
+      override def edgeData: Seq[Table[DataFrame]] = Seq.empty
+    }
+    checkGraph(actualGraph.asInstanceOf[SparkGraph], expectedGraph)
+  }
 
   private def extractConstructClauses(query: String, expectedNumClauses: Int = 1)
   : Seq[AlgebraTreeNode] = {
@@ -941,21 +1030,20 @@ class SqlPlannerTest extends FunSuite
         .collect()
         .map(row =>
           (row.get(0).toString.toLong, row.get(1).toString.toLong, row.get(2).toString.toLong))
+    val btableEdgeIds: Seq[Long] = btableIdTuples.map(tuple => tuple._1).sorted
+    val actualEdgeIds: Seq[Long] = actualIdTuples.map(tuple => tuple._1).sorted
+    val btableFromIds: Seq[Long] = btableIdTuples.map(tuple => tuple._2).sorted
+    val actualFromIds: Seq[Long] = actualIdTuples.map(tuple => tuple._2).sorted
+    val btableToIds: Seq[Long] = btableIdTuples.map(tuple => tuple._3).sorted
+    val actualToIds: Seq[Long] = actualIdTuples.map(tuple => tuple._3).sorted
 
-    val btableEdgeIds: Seq[Long] = btableIdTuples.map(tuple => tuple._1)
-    val actualEdgeIds: Seq[Long] = actualIdTuples.map(tuple => tuple._1)
-
-    val edgeActualToBtableId: Map[Long, Long] =
-      (actualEdgeIds.sorted zip btableEdgeIds.sorted).toMap
     val btableTupleMap: Map[Long, (Long, Long)] =
       btableIdTuples.map(tuple => tuple._1 -> (tuple._2, tuple._3)).toMap
 
-    val btableFromIds: Seq[Long] = btableIdTuples.map(tuple => tuple._2).sorted
-    val actualFromIds: Seq[Long] = actualIdTuples.map(tuple => tuple._2).sorted
+    val edgeActualToBtableId: Map[Long, Long] = (actualEdgeIds zip btableEdgeIds).toMap
+
     val fromBtableToActualId: Map[Long, Long] = (btableFromIds zip actualFromIds).toMap
 
-    val btableToIds: Seq[Long] = btableIdTuples.map(tuple => tuple._3).sorted
-    val actualToIds: Seq[Long] = actualIdTuples.map(tuple => tuple._3).sorted
     val toBtableToActualId: Map[Long, Long] = (btableToIds zip actualToIds).toMap
 
     override val collectedActualIds: Seq[Long] = actualEdgeIds
@@ -1001,16 +1089,24 @@ class SqlPlannerTest extends FunSuite
     override def assertEqual(): Unit = {
       super.assertEqual()
 
-      val btableFromToMap: Map[Long, Long] =
-        btableIdTuples.map(idTuple => idTuple._2 -> idTuple._3).toMap
+      val btableFromToMap: Map[Long, Seq[Long]] =
+        btableIdTuples
+          .map(idTuple => idTuple._2 -> idTuple._3) // from -> to
+          .groupBy(_._1) // group by from
+          .mapValues(tuples => tuples.map(_._2)) // extract sequence of to's
+      val actualFromToMap: Map[Long, Seq[Long]] =
+        actualIdTuples
+          .map(idTuple => idTuple._2 -> idTuple._3) // from -> to
+          .groupBy(_._1) // group by from
+          .mapValues(tuples => tuples.map(_._2)) // extract sequence of to's
       val fromActualToBtableId: Map[Long, Long] = fromBtableToActualId.map(_.swap)
       val toActualToBtableId: Map[Long, Long] = toBtableToActualId.map(_.swap)
 
-      actualIdTuples.foreach {
-        case (_, actualFromId, actualToId) =>
+      actualFromToMap.foreach {
+        case (actualFromId, actualToIdList) =>
           val btableFromId: Long = fromActualToBtableId(actualFromId)
-          val btableToId: Long = toActualToBtableId(actualToId)
-          assert(btableFromToMap(btableFromId) == btableToId)
+          val btableToIds: Seq[Long] = actualToIdList.map(toActualToBtableId)
+          assert(btableFromToMap(btableFromId).sorted == btableToIds.sorted)
       }
     }
   }
