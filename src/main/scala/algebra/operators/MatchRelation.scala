@@ -1,7 +1,7 @@
 package algebra.operators
 
 import algebra.expressions.{AlgebraExpression, Reference}
-import algebra.types.{Edge, Graph, PathQuantifier, Path, Vertex}
+import algebra.types._
 import common.compiler.Context
 
 case class SimpleMatchRelationContext(graph: Graph) extends Context {
@@ -63,4 +63,15 @@ case class StoredPathRelation(ref: Reference,
   extends RelationLike(new BindingSet(ref) ++ fromRel.getBindingSet ++ toRel.getBindingSet) {
 
   children = List(ref, labelRelation, expr, fromRel, toRel)
+}
+
+case class VirtualPathRelation(ref: Reference,
+                               isReachableTest: Boolean,
+                               fromRel: VertexRelation,
+                               toRel: VertexRelation,
+                               costVarDef: Option[Reference],
+                               pathExpression: Option[PathExpression])
+  extends RelationLike(new BindingSet(ref) ++ fromRel.getBindingSet ++ toRel.getBindingSet) {
+
+  children = List(ref, fromRel, toRel)
 }

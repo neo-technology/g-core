@@ -62,7 +62,7 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
       val leftEndpointRel: VertexRelation = p.children(1).asInstanceOf[VertexRelation]
       val rightEndpointRel: VertexRelation = p.children(2).asInstanceOf[VertexRelation]
       val pathRel: RelationLike = objPattern match {
-        case omp @ ObjectPattern(True, _) => AllRelations
+        case ObjectPattern(True, _) => AllRelations
         case _ =>
           val disjLabels: DisjunctLabels = objPattern.children.head.asInstanceOf[DisjunctLabels]
           Relation(label = disjLabels.children.head.asInstanceOf[Label])
@@ -84,6 +84,25 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
         },
         costVarDef,
         quantif)
+
+    case p @ Path(
+    ref, isReachableTest, _, _, connType, _, _, costVarDef, /*isObj =*/ false, pathExpr) =>
+      val leftEndpointRel: VertexRelation = p.children(1).asInstanceOf[VertexRelation]
+      val rightEndpointRel: VertexRelation = p.children(2).asInstanceOf[VertexRelation]
+
+      VirtualPathRelation(
+        ref,
+        isReachableTest,
+        fromRel = connType match {
+          case InConn => rightEndpointRel
+          case OutConn => leftEndpointRel
+        },
+        toRel = connType match {
+          case InConn => leftEndpointRel
+          case OutConn => rightEndpointRel
+        },
+        costVarDef,
+        pathExpr)
   }
 
   private val withLabels: RewriteFuncType = {

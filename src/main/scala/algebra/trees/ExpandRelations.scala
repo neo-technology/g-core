@@ -1,9 +1,10 @@
 package algebra.trees
 
-import algebra.expressions.{Exists, Label, Reference}
+import algebra.expressions.{DisjunctLabels, Exists, Label, Reference}
 import algebra.operators._
-import algebra.types.{Connection, DefaultGraph, Graph, GraphPattern, NamedGraph}
+import algebra.types._
 import common.trees.TopDownRewriter
+import schema.EntitySchema.LabelRestrictionMap
 import schema.{Catalog, GraphSchema, SchemaMap}
 
 import scala.collection.mutable
@@ -174,37 +175,27 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
           label => matchToBindingTuplesMmap.addBinding(relation, VertexTuple(label)))
 
       case relation @ SimpleMatchRelation(EdgeRelation(edgeRef, _, _, _, _), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         val constrainedEdgeLabels: Seq[Label] = constrainedLabels(edgeRef).toSeq
         graphSchema.edgeRestrictions.map
-          .filter(kv => constrainedEdgeLabels.contains(kv._1))
-          .foreach(kv => {
-            val edgeLabel: Label = kv._1
-            val fromLabel: Label = kv._2._1
-            val toLabel: Label = kv._2._2
-            matchToBindingTuplesMmap
-              .addBinding(relation, EdgeOrPathTuple(edgeLabel, fromLabel, toLabel))
-          })
+          .filter { case (edgeLabel, _) => constrainedEdgeLabels.contains(edgeLabel) }
+          .foreach {
+            case (edgeLabel, (fromLabel, toLabel)) =>
+              matchToBindingTuplesMmap.addBinding(
+                relation, EdgeOrPathTuple(edgeLabel, fromLabel, toLabel))
+          }
 
       case relation @ SimpleMatchRelation(
       StoredPathRelation(pathRef, _, _, _, _, _, _, _), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         val constrainedPathLabels: Seq[Label] = constrainedLabels(pathRef).toSeq
         graphSchema.storedPathRestrictions.map
-          .filter(kv => constrainedPathLabels.contains(kv._1))
-          .foreach(kv => {
-            val pathLabel: Label = kv._1
-            val fromLabel: Label = kv._2._1
-            val toLabel: Label = kv._2._2
-            matchToBindingTuplesMmap
-              .addBinding(relation, EdgeOrPathTuple(pathLabel, fromLabel, toLabel))
-          })
+          .filter { case (pathLabel, _) => constrainedPathLabels.contains(pathLabel) }
+          .foreach {
+            case (pathLabel, (fromLabel, toLabel)) =>
+              matchToBindingTuplesMmap.addBinding(
+                relation, EdgeOrPathTuple(pathLabel, fromLabel, toLabel))
+          }
     }
 
     matchToBindingTuplesMmap
@@ -215,28 +206,25 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
     val initialRestrictedBindings: BindingToLabelsMmap = newBindingToLabelsMmap
     relations.foreach {
       case SimpleMatchRelation(VertexRelation(ref, _, _), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         initialRestrictedBindings.update(ref, mutable.Set(graphSchema.vertexSchema.labels: _*))
 
       case SimpleMatchRelation(EdgeRelation(edgeRef, _, _, fromRel, toRel), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         val vertexLabels: Seq[Label] = graphSchema.vertexSchema.labels
         initialRestrictedBindings.update(edgeRef, mutable.Set(graphSchema.edgeSchema.labels: _*))
         initialRestrictedBindings.update(fromRel.ref, mutable.Set(vertexLabels: _*))
         initialRestrictedBindings.update(toRel.ref, mutable.Set(vertexLabels: _*))
+//
+//      case SimpleMatchRelation(VirtualPathRelation(_, _, fromRel, toRel, _, _), matchContext, _) =>
+//        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
+//        val vertexLabels: Seq[Label] = graphSchema.vertexSchema.labels
+//        initialRestrictedBindings.update(fromRel.ref, mutable.Set(vertexLabels: _*))
+//        initialRestrictedBindings.update(toRel.ref, mutable.Set(vertexLabels: _*))
 
       case SimpleMatchRelation(
       StoredPathRelation(pathRef, _, _, _, fromRel, toRel, _, _), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         val vertexLabels: Seq[Label] = graphSchema.vertexSchema.labels
         initialRestrictedBindings.update(pathRef, mutable.Set(graphSchema.pathSchema.labels: _*))
         initialRestrictedBindings.update(fromRel.ref, mutable.Set(vertexLabels: _*))
@@ -252,27 +240,23 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
     var changed: Boolean = false
     relations.foreach {
       case SimpleMatchRelation(VertexRelation(ref, labelRelation, _), _, _) =>
-        changed |= analyseSingleEndpRelation(ref, labelRelation, restrictedBindings)
+        changed |= analyseVertexRelation(ref, labelRelation, restrictedBindings)
 
       case SimpleMatchRelation(EdgeRelation(ref, edgeLblRel, _, fromRel, toRel), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         changed |=
-          analyseDoubleEndpRelation(
+          analyseEdgeRelation(
             ref, edgeLblRel, fromRel, toRel, graphSchema.edgeRestrictions, restrictedBindings)
-
 
       case SimpleMatchRelation(
       StoredPathRelation(ref, _, pathLblRel, _, fromRel, toRel, _, _), matchContext, _) =>
-        val graphSchema: GraphSchema = matchContext.graph match {
-          case DefaultGraph => catalog.defaultGraph()
-          case NamedGraph(graphName) => catalog.graph(graphName)
-        }
+        val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
         changed |=
-          analyseDoubleEndpRelation(
+          analyseStoredPathRelation(
             ref, pathLblRel, fromRel, toRel, graphSchema.storedPathRestrictions, restrictedBindings)
+
+//      case SimpleMatchRelation(VirtualPathRelation(ref, _, fromRel, toRel, _, pathExpr), _, _) =>
+//        changed |= analyseVirtualPathRelation(ref, fromRel, toRel, pathExpr, restrictedBindings)
     }
 
     if (changed)
@@ -281,57 +265,74 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
       restrictedBindings
   }
 
-  private def analyseSingleEndpRelation(ref: Reference,
-                                        labelRelation: RelationLike,
-                                        restrictedBindings: BindingToLabelsMmap): Boolean = {
+  private def analyseVertexRelation(ref: Reference,
+                                    labelRelation: RelationLike,
+                                    restrictedBindings: BindingToLabelsMmap): Boolean = {
     var changed: Boolean = false
-
     labelRelation match {
-      case Relation(label) =>
-        val currentBindings: mutable.Set[Label] = restrictedBindings(ref)
-        val newBinding: mutable.Set[Label] = mutable.Set(label)
-        if (!currentBindings.equals(newBinding)) {
-          restrictedBindings.update(ref, newBinding)
-          changed = true
-        }
+      case Relation(label) => changed = tryUpdateStrictLabel(ref, label, restrictedBindings)
       case _ =>
     }
-
     changed
   }
 
-  private def analyseDoubleEndpRelation(ref: Reference,
+  private def analyseEdgeRelation(ref: Reference,
+                                  labelRelation: RelationLike,
+                                  fromRel: VertexRelation,
+                                  toRel: VertexRelation,
+                                  schemaRestrictions: LabelRestrictionMap,
+                                  restrictedBindings: BindingToLabelsMmap): Boolean = {
+    analyseEdgeOrStoredPath(
+      ref, labelRelation, fromRel, toRel, schemaRestrictions, restrictedBindings)
+  }
+
+  private def analyseStoredPathRelation(ref: Reference,
                                         labelRelation: RelationLike,
                                         fromRel: VertexRelation,
                                         toRel: VertexRelation,
-                                        schemaRestrictions: SchemaMap[Label, (Label, Label)],
+                                        schemaRestrictions: LabelRestrictionMap,
                                         restrictedBindings: BindingToLabelsMmap): Boolean = {
+    analyseEdgeOrStoredPath(
+      ref, labelRelation, fromRel, toRel, schemaRestrictions, restrictedBindings)
+  }
+
+//  private def analyseVirtualPathRelation(reference: Reference,
+//                                         fromRel: VertexRelation,
+//                                         toRel: VertexRelation,
+//                                         pathExpression: Option[PathExpression],
+//                                         restrictedBindings: BindingToLabelsMmap): Boolean = {
+//    var changed: Boolean = false
+//    pathExpression match {
+//      case Some(KleeneStar(DisjunctLabels(Seq(label)), _, _)) =>
+//      case None => _
+//    }
+//
+//    changed
+//  }
+
+  private def analyseEdgeOrStoredPath(ref: Reference,
+                                      labelRelation: RelationLike,
+                                      fromRel: VertexRelation,
+                                      toRel: VertexRelation,
+                                      schemaRestrictions: LabelRestrictionMap,
+                                      restrictedBindings: BindingToLabelsMmap): Boolean = {
     var changed: Boolean = false
 
     fromRel.labelRelation match {
       // Try to update fromRel.ref binding depending on whether there is any label for fromRel.
       case Relation(label) =>
-        val currentBindings: mutable.Set[Label] = restrictedBindings(fromRel.ref)
-        val newBinding: mutable.Set[Label] = mutable.Set(label)
-        if (!currentBindings.equals(newBinding)) {
-          restrictedBindings.update(fromRel.ref, newBinding)
-          changed = true
-        }
+        changed |= tryUpdateStrictLabel(fromRel.ref, label, restrictedBindings)
       // Try to update fromRel.ref binding depending on the edge bindings.
       case AllRelations =>
         val currentBindings: mutable.Set[Label] = restrictedBindings(fromRel.ref)
         val newBindings: mutable.Set[Label] =
           mutable.Set(
             schemaRestrictions.map
-              // Extract edges that appear in the restrictions of current edge.
-              .filter(kv => {
-                val edgeOrPathLabel: Label = kv._1
-                restrictedBindings(ref).contains(edgeOrPathLabel)
-              })
-              // Retain (from, to) tuple.
-              .values
-              // Retain left endpoint in (from, to) tuple (i.e, from).
-              .map(_._1)
+              .filter {
+                case (edgeOrPathLabel, _) => restrictedBindings(ref).contains(edgeOrPathLabel)
+              }
+              .values // (from, to) label tuples
+              .map(_._1) // take left endpoint of tuple (from)
               .toSeq: _*)
         val intersection: mutable.Set[Label] = currentBindings intersect newBindings
         if (currentBindings.size != intersection.size) {
@@ -342,13 +343,7 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
 
     labelRelation match {
       // Try to update this edge's bindings if there is a label assigned to it.
-      case Relation(label) =>
-        val currentBindings: mutable.Set[Label] = restrictedBindings(ref)
-        val newBinding: mutable.Set[Label] = mutable.Set(label)
-        if (!currentBindings.equals(newBinding)) {
-          restrictedBindings.update(ref, newBinding)
-          changed = true
-        }
+      case Relation(label) => changed |= tryUpdateStrictLabel(ref, label, restrictedBindings)
       // Try to update this edge's bindings based on the bindings of left and right endpoints.
       case AllRelations =>
         val currentBindings: mutable.Set[Label] = restrictedBindings(ref)
@@ -357,12 +352,11 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
             schemaRestrictions.map
               // Extract the edges that have the left endpoint in the left endpoint's
               // restrictions and the right endpoint in the right endpoint's restrictions.
-              .filter(kv => {
-                val fromLabel: Label = kv._2._1
-                val toLabel: Label = kv._2._2
-                restrictedBindings(fromRel.ref).contains(fromLabel) &&
-                  restrictedBindings(toRel.ref).contains(toLabel)
-              })
+              .filter {
+                case (_, (fromLabel, toLabel)) =>
+                  restrictedBindings(fromRel.ref).contains(fromLabel) &&
+                    restrictedBindings(toRel.ref).contains(toLabel)
+              }
               .keys
               .toSeq: _*)
         val intersection: mutable.Set[Label] = currentBindings intersect newBindings
@@ -374,28 +368,18 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
 
     toRel.labelRelation match {
       // Try to update toRel.ref binding depending on whether there is any label for toRel.
-      case Relation(label) =>
-        val currentBindings: mutable.Set[Label] = restrictedBindings(toRel.ref)
-        val newBinding: mutable.Set[Label] = mutable.Set(label)
-        if (!currentBindings.equals(newBinding)) {
-          restrictedBindings.update(toRel.ref, newBinding)
-          changed = true
-        }
+      case Relation(label) => changed |= tryUpdateStrictLabel(toRel.ref, label, restrictedBindings)
       // Try to update toRel.ref binding depending on the edge bindings.
       case AllRelations =>
         val currentBindings: mutable.Set[Label] = restrictedBindings(toRel.ref)
         val newBindings: mutable.Set[Label] =
           mutable.Set(
             schemaRestrictions.map
-              // Extract edges that appear in the restrictions of current edge.
-              .filter(kv => {
-                val edgeOrPathLabel: Label = kv._1
-                restrictedBindings(ref).contains(edgeOrPathLabel)
-              })
-              // Retain (from, to) tuple.
-              .values
-              // Retain right endpoint in (from, to) tuple.
-              .map(_._2)
+              .filter {
+                case (edgeOrPathLabel, _) => restrictedBindings(ref).contains(edgeOrPathLabel)
+              }
+              .values // (from, to) label tuples
+              .map(_._2) // take right endpoint of tuple (to)
               .toSeq: _*)
         val intersection: mutable.Set[Label] = currentBindings intersect newBindings
         if (currentBindings.size != intersection.size) {
@@ -405,5 +389,27 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
     }
 
     changed
+  }
+
+  private def tryUpdateStrictLabel(reference: Reference,
+                                   label: Label,
+                                   restrictedBindings: BindingToLabelsMmap): Boolean = {
+    var changed: Boolean = false
+    val currentBindings: mutable.Set[Label] = restrictedBindings(reference)
+    val newBinding: mutable.Set[Label] = mutable.Set(label)
+    if (!currentBindings.equals(newBinding)) {
+      restrictedBindings.update(reference, newBinding)
+      changed = true
+    }
+
+    changed
+  }
+
+  private def extractGraphSchema(matchContext: SimpleMatchRelationContext,
+                                 catalog: Catalog): GraphSchema = {
+    matchContext.graph match {
+      case DefaultGraph => catalog.defaultGraph()
+      case NamedGraph(graphName) => catalog.graph(graphName)
+    }
   }
 }
