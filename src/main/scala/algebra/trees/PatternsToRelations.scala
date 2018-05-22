@@ -21,10 +21,10 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
           expr = objPattern.children.last.asInstanceOf[AlgebraExpression])
 
       case _ =>
-        val hasLabel: HasLabel = objPattern.children.head.asInstanceOf[HasLabel]
+        val disjLabels: DisjunctLabels = objPattern.children.head.asInstanceOf[DisjunctLabels]
         VertexRelation(
           ref = ref,
-          labelRelation = Relation(label = hasLabel.children.head.asInstanceOf[Label]),
+          labelRelation = Relation(label = disjLabels.children.head.asInstanceOf[Label]),
           expr = objPattern.children.last.asInstanceOf[AlgebraExpression])
     }
   }
@@ -36,8 +36,8 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
       val edgeRel: RelationLike = objPattern match {
         case omp @ ObjectPattern(True, _) => AllRelations
         case _ =>
-          val hasLabel: HasLabel = objPattern.children.head.asInstanceOf[HasLabel]
-          Relation(label = hasLabel.children.head.asInstanceOf[Label])
+          val disjLabels: DisjunctLabels = objPattern.children.head.asInstanceOf[DisjunctLabels]
+          Relation(label = disjLabels.children.head.asInstanceOf[Label])
       }
       val expr: AlgebraExpression = objPattern.children.last.asInstanceOf[AlgebraExpression]
 
@@ -64,8 +64,8 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
       val pathRel: RelationLike = objPattern match {
         case omp @ ObjectPattern(True, _) => AllRelations
         case _ =>
-          val hasLabel: HasLabel = objPattern.children.head.asInstanceOf[HasLabel]
-          Relation(label = hasLabel.children.head.asInstanceOf[Label])
+          val disjLabels: DisjunctLabels = objPattern.children.head.asInstanceOf[DisjunctLabels]
+          Relation(label = disjLabels.children.head.asInstanceOf[Label])
       }
       val expr: AlgebraExpression = objPattern.children.last.asInstanceOf[AlgebraExpression]
 
@@ -87,11 +87,11 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
   }
 
   private val withLabels: RewriteFuncType = {
-    case WithLabels(And(_: HasLabel, _: HasLabel)) =>
+    case ConjunctLabels(And(_: DisjunctLabels, _: DisjunctLabels)) =>
       throw UnsupportedOperation("Label conjunction is not supported. An entity must have " +
         "only one label associated with it.")
-    case WithLabels(And(hl: HasLabel, True)) => hl
-    case WithLabels(And(True, hl: HasLabel)) => hl
+    case ConjunctLabels(And(hl: DisjunctLabels, True)) => hl
+    case ConjunctLabels(And(True, hl: DisjunctLabels)) => hl
   }
 
   override val rule: RewriteFuncType = path orElse edge orElse vertex orElse withLabels

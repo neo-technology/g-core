@@ -278,7 +278,7 @@ object MatchTreeBuilder {
   private def extractLabels(from: SpoofaxBaseTreeNode): AlgebraExpression = {
     from.name match {
       case "None" => True
-      case "Some" => WithLabels(extractLabels(from.children.head))
+      case "Some" => ConjunctLabels(extractLabels(from.children.head))
       case "ConjunctLabels" => extractDisjunctLabels(from.children)
       case _ => throw QueryParseException(s"Cannot extract labels from node type ${from.name}")
     }
@@ -293,7 +293,7 @@ object MatchTreeBuilder {
       // dl = DisjunctLabels
       case Seq(dl, other@_*) =>
         And(
-          HasLabel(
+          DisjunctLabels(
             dl.children.map(
               label => Label(label.children.head.asInstanceOf[SpoofaxLeaf[String]].value))),
           extractDisjunctLabels(other))

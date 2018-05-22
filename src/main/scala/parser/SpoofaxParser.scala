@@ -27,6 +27,7 @@ case class SpoofaxParser(context: ParseContext) extends ParseStage {
     val ast: IStrategoTerm = GcoreLang.parseQuery(query)
     val parseTree: SpoofaxBaseTreeNode = SpoofaxTreeBuilder build ast
     val rewriteParseTree: SpoofaxBaseTreeNode = SpoofaxCanonicalRewriter rewriteTree parseTree
+    logger.info("\n{}", rewriteParseTree.treeString())
     val algebraTree: AlgebraTreeNode = AlgebraTreeBuilder build rewriteParseTree
     logger.info("\n{}", algebraTree.treeString())
     algebraTree.asInstanceOf[Query].checkWithContext(QueryContext(context.catalog))

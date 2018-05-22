@@ -10,7 +10,7 @@ class PatternsToRelationsTest extends FunSuite with Matchers {
   private val emptyObjPattern: ObjectPattern = ObjectPattern(True, True)
   private val labeledObjPattern: ObjectPattern =
     ObjectPattern(
-      labelsPred = WithLabels(And(HasLabel(Seq(Label("foo"))), True)),
+      labelsPred = ConjunctLabels(And(DisjunctLabels(Seq(Label("foo"))), True)),
       propsPred = True)
 
   test("Vertex - match on AllRelations() if no label provided") {

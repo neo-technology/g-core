@@ -26,19 +26,19 @@ import schema.EntitySchema
   * [[SingleEndpointConn]]ection.
   *
   * Each variable match pattern can specify conditions on labels and properties. We call this the
-  * pattern of an object. The pattern is the conjunction of a [[WithLabels]] and a [[WithProps]]
+  * pattern of an object. The pattern is the conjunction of a [[ConjunctLabels]] and a [[WithProps]]
   * expression. Any of them can be empty, in which case they will be substituted with the [[True]]
   * literal. The two predicates are wrapped in an [[ObjectPattern]] node.
   *
-  * The [[WithLabels]] predicate represents a conjunction of disjunct lists of labels. We translate
-  * each disjunction as a [[HasLabel]] [[AlgebraExpression]] and then rewrite the conjunction of
-  * [[HasLabel]]s as follows:
+  * The [[ConjunctLabels]] predicate represents a conjunction of disjunct lists of labels. We
+  * translate each disjunction as a [[DisjunctLabels]] [[AlgebraExpression]] and then rewrite the
+  * conjunction of [[DisjunctLabels]]s as follows:
   *
   * [DLS0, DLS1, DLS2, ... DLSn-1] =
   * = And(DLS0, [DLS1, DLS2, ..., DLSn-1) =
   * = And(DLS0, And(DLS1, [DLS2, ..., DLSn-1])) = ...
   *
-  * , where DLSi(labels: Seq[Literal]) = HasLabel(Li0, Li1, ...)
+  * , where DLSi(labels: Seq[Literal]) = DisjunctLabels(Li0, Li1, ...)
   *
   * The [[WithProps]] predicate represents a conjunction of property value unrolling. We translate
   * the predicate to an [[Eq]] expression between the [[PropertyKey]] and the property substitute.
@@ -83,7 +83,7 @@ abstract class Connection(ref: Reference, expr: ObjectPattern) extends AlgebraTy
               labelsExpr = None,
               schema = schema))
 
-      case ObjectPattern(labelsPred: WithLabels, propsPred: WithProps) =>
+      case ObjectPattern(labelsPred: ConjunctLabels, propsPred: WithProps) =>
         propsPred
           .checkWithContext(
             PropertyContext(
@@ -91,8 +91,8 @@ abstract class Connection(ref: Reference, expr: ObjectPattern) extends AlgebraTy
               labelsExpr = Some(labelsPred),
               schema = schema))
 
-      case hl: HasLabel =>
-        hl.checkWithContext(
+      case dl: DisjunctLabels =>
+        dl.checkWithContext(
           DisjunctLabelsContext(
             graphName = context.asInstanceOf[GraphPatternContext].graphName,
             schema = schema))
