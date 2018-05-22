@@ -25,6 +25,8 @@ abstract class TargetPlanner {
 
   def planPathScan(pathRelation: StoredPathRelation, graph: Graph, catalog: Catalog): PathScan
 
+  def planPathSearch(pathRelation: VirtualPathRelation, graph: Graph, catalog: Catalog): PathSearch
+
   def planUnionAll(unionAllOp: algebra.operators.UnionAll): UnionAll
 
   def planJoin(joinOp: JoinLike): Join

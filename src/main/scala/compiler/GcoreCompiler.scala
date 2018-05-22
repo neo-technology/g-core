@@ -14,5 +14,5 @@ case class GcoreCompiler(context: CompileContext) extends Compiler {
   val target: RunTargetCodeStage = SqlRunner(context)
 
   override def compile(query: String): Unit =
-    (parser andThen rewriter) (query) // andThen target) (query)
+    (parser andThen rewriter andThen target) (query)
 }
