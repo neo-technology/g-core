@@ -59,7 +59,7 @@ case class StoredPathRelation(ref: Reference,
                               fromRel: VertexRelation,
                               toRel: VertexRelation,
                               costVarDef: Option[Reference],
-                              quantifier: Option[PathQuantifier])
+                              quantifier: PathQuantifier)
   extends RelationLike(new BindingSet(ref) ++ fromRel.getBindingSet ++ toRel.getBindingSet) {
 
   children = List(ref, labelRelation, expr, fromRel, toRel)

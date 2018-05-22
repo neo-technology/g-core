@@ -157,25 +157,30 @@ case class Path(connName: Reference,
                 rightEndpoint: SingleEndpointConn,
                 connType: ConnectionType,
                 expr: ObjectPattern,
-                quantifier: Option[PathQuantifier],
+                quantifier: PathQuantifier,
                 // If COST is not mentioned, we are not interested in computing it by default.
                 costVarDef: Option[Reference],
                 isObj: Boolean)
                 // TODO: path expression
   extends DoubleEndpointConn(connName, connType, leftEndpoint, rightEndpoint, expr) {
 
-  children = List(connName, leftEndpoint, rightEndpoint, connType, expr) ++
-    quantifier.toList ++ costVarDef.toList
+  children =
+    List(connName, leftEndpoint, rightEndpoint, connType, expr, quantifier) ++ costVarDef.toList
 
   override def toString: String = s"$name [isObjectified = $isObj]"
 
   override def schemaOfEntityType(context: GraphPatternContext): EntitySchema =
     context.schema.pathSchema
 
-  /** Virtual paths are not supported in current version of interpreter. */
   override def check(): Unit = {
     super.check()
-    if (!isObj)
-      throw UnsupportedOperation(s"Virtual paths unsupported.")
+
+    val acceptedConfig: Boolean =
+      (isObj && quantifier == AllPaths) ||
+        (!isObj && quantifier == Shortest(qty = 1, isDistinct = false))
+
+    if (!acceptedConfig)
+      throw UnsupportedOperation(s"Unsupported path configuration: " +
+        s"${if (isObj) "objectified" else "virtual"} path, quantifier = $quantifier")
   }
 }

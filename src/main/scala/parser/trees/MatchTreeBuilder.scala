@@ -224,26 +224,25 @@ object MatchTreeBuilder {
     val quantifierElement = connElement.children.head /* Virtual/Objectified */
       .children.head /* Some/None */
     val quantifier = quantifierElement.name match {
-      case "None" => None
+      // Default for objectified is AllPaths, default for virtual is shortest.
+      case "None" => if (isObj) AllPaths else Shortest(qty = 1, isDistinct = false)
       case "Some" => quantifierElement.children.head.name match {
-        case "Shortest" => Some(Shortest(qty = 1, isDistinct = false))
+        case "Shortest" => Shortest(qty = 1, isDistinct = false)
         case "XShortest" =>
-          Some(
-            Shortest(
-              qty =
-                quantifierElement.children.head
-                  .children.head.asInstanceOf[SpoofaxLeaf[String]]
-                  .value.toInt,
-              isDistinct = false))
+          Shortest(
+            qty =
+              quantifierElement.children.head
+                .children.head.asInstanceOf[SpoofaxLeaf[String]]
+                .value.toInt,
+            isDistinct = false)
         case "XDistinctShortest" =>
-          Some(
-            Shortest(
-              qty =
-                quantifierElement.children.head
-                  .children.head.asInstanceOf[SpoofaxLeaf[String]]
-                  .value.toInt,
-              isDistinct = true))
-        case "AllPaths" => Some(AllPaths)
+          Shortest(
+            qty =
+              quantifierElement.children.head
+                .children.head.asInstanceOf[SpoofaxLeaf[String]]
+                .value.toInt,
+            isDistinct = true)
+        case "AllPaths" => AllPaths
       }
     }
 

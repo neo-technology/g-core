@@ -22,11 +22,11 @@ abstract class PathScan(pathRelation: StoredPathRelation, graph: Graph, catalog:
 
   val isReachableTest: Boolean = pathRelation.isReachableTest
   val costVarDef: Option[Reference] = pathRelation.costVarDef
-  val quantifier: Option[PathQuantifier] = pathRelation.quantifier
+  val quantifier: PathQuantifier = pathRelation.quantifier
 
   children =
     List(pathBinding, fromBinding, toBinding, pathTableName, fromTableName, toTableName,
-      pathExpr, fromExpr, toExpr) ++ costVarDef.toList ++ quantifier.toList
+      pathExpr, fromExpr, toExpr, quantifier) ++ costVarDef.toList
 
   override def name: String = s"${super.name} [isReachableTest = $isReachableTest]"
 }
