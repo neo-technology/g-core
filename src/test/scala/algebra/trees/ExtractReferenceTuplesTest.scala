@@ -46,7 +46,8 @@ class ExtractReferenceTuplesTest extends FunSuite {
             connType = OutConn,
             expr = emptyObjPattern,
             quantifier = AllPaths, costVarDef = None,
-            isObj = true),
+            isObj = true,
+            pathExpression = None),
           Path(
             connName = Reference("p2"),
             isReachableTest = true,
@@ -55,7 +56,8 @@ class ExtractReferenceTuplesTest extends FunSuite {
             connType = OutConn,
             expr = emptyObjPattern,
             quantifier = AllPaths, costVarDef = None,
-            isObj = true)
+            isObj = true,
+            pathExpression = None)
         ))
     val expected =
       BindingContext(

@@ -62,6 +62,43 @@ case class Shortest(qty: Integer, isDistinct: Boolean) extends PathQuantifier {
 }
 case object AllPaths extends PathQuantifier
 
+/** Path expression. **/
+abstract class PathExpression extends AlgebraType
+
+case class KleeneStar(labels: DisjunctLabels, lowerBound: Int, upperBound: Int)
+  extends PathExpression with SemanticCheck {
+
+  children = List(labels)
+
+  override def name: String = s"${super.name} [lowerBound = $lowerBound, upperBound = $upperBound]"
+
+  override def check(): Unit = {
+    if (lowerBound > 0 || upperBound < Int.MaxValue)
+      throw UnsupportedOperation("Kleene bounds are not supported in path expressions.")
+  }
+}
+
+case class KleeneUnion(lhs: PathExpression, rhs: PathExpression)
+  extends PathExpression with SemanticCheck {
+
+  children = List(lhs, rhs)
+
+  override def check(): Unit =
+    throw UnsupportedOperation("Path expression union is not supported.")
+}
+
+case class KleeneConcatenation(lhs: PathExpression, rhs: PathExpression)
+  extends PathExpression with SemanticCheck {
+
+  children = List(lhs, rhs)
+
+  override def check(): Unit =
+    throw UnsupportedOperation("Path expression concatenation is not supported.")
+}
+
+case class MacroNameReference(reference: Reference) extends PathExpression {
+  children = List(reference)
+}
 
 /** Abstract connections in graph. */
 abstract class Connection(ref: Reference, expr: ObjectPattern) extends AlgebraType
@@ -160,12 +197,13 @@ case class Path(connName: Reference,
                 quantifier: PathQuantifier,
                 // If COST is not mentioned, we are not interested in computing it by default.
                 costVarDef: Option[Reference],
-                isObj: Boolean)
-                // TODO: path expression
+                isObj: Boolean,
+                pathExpression: Option[PathExpression])
   extends DoubleEndpointConn(connName, connType, leftEndpoint, rightEndpoint, expr) {
 
   children =
-    List(connName, leftEndpoint, rightEndpoint, connType, expr, quantifier) ++ costVarDef.toList
+    List(connName, leftEndpoint, rightEndpoint, connType, expr, quantifier) ++ costVarDef.toList ++
+      pathExpression.toList
 
   override def toString: String = s"$name [isObjectified = $isObj]"
 
@@ -175,12 +213,13 @@ case class Path(connName: Reference,
   override def check(): Unit = {
     super.check()
 
-    val acceptedConfig: Boolean =
+    val acceptedQuantifierConfig: Boolean =
       (isObj && quantifier == AllPaths) ||
-        (!isObj && quantifier == Shortest(qty = 1, isDistinct = false))
+        (!isObj && quantifier == Shortest(qty = 1, isDistinct = false) && pathExpression.isDefined)
 
-    if (!acceptedConfig)
+    if (!acceptedQuantifierConfig)
       throw UnsupportedOperation(s"Unsupported path configuration: " +
-        s"${if (isObj) "objectified" else "virtual"} path, quantifier = $quantifier")
+        s"${if (isObj) "objectified" else "virtual"} path, " +
+        s"quantifier = $quantifier, path expression = $pathExpression")
   }
 }

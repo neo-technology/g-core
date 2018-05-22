@@ -58,7 +58,7 @@ object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
 
   private val path: RewriteFuncType = {
     case p @ Path(
-    ref, isReachableTest, _, _, connType, objPattern, quantif, costVarDef, /*isObj =*/ true) =>
+    ref, isReachableTest, _, _, connType, objPattern, quantif, costVarDef, /*isObj =*/ true, _) =>
       val leftEndpointRel: VertexRelation = p.children(1).asInstanceOf[VertexRelation]
       val rightEndpointRel: VertexRelation = p.children(2).asInstanceOf[VertexRelation]
       val pathRel: RelationLike = objPattern match {

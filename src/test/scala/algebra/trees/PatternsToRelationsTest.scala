@@ -103,7 +103,7 @@ class PatternsToRelationsTest extends FunSuite with Matchers {
         leftEndpoint = from, rightEndpoint = to,
         connType = OutConn,
         expr = emptyObjPattern,
-        quantifier = AllPaths, costVarDef = None, isObj = true)
+        quantifier = AllPaths, costVarDef = None, isObj = true, pathExpression = None)
     val relationOutConn = PatternsToRelations rewriteTree pathOutConn
     val pathInConn =
       Path(
@@ -112,7 +112,7 @@ class PatternsToRelationsTest extends FunSuite with Matchers {
         leftEndpoint = from, rightEndpoint = to,
         connType = InConn,
         expr = emptyObjPattern,
-        quantifier = AllPaths, costVarDef = None, isObj = true)
+        quantifier = AllPaths, costVarDef = None, isObj = true, pathExpression = None)
     val relationInConn = PatternsToRelations rewriteTree pathInConn
 
     relationOutConn should matchPattern {
@@ -140,7 +140,7 @@ class PatternsToRelationsTest extends FunSuite with Matchers {
         leftEndpoint = from, rightEndpoint = to,
         connType = OutConn,
         expr = labeledObjPattern,
-        quantifier = AllPaths, costVarDef = None, isObj = true)
+        quantifier = AllPaths, costVarDef = None, isObj = true, pathExpression = None)
     val relationOutConn = PatternsToRelations rewriteTree pathOutConn
     val pathInConn =
       Path(
@@ -149,7 +149,7 @@ class PatternsToRelationsTest extends FunSuite with Matchers {
         leftEndpoint = from, rightEndpoint = to,
         connType = InConn,
         expr = labeledObjPattern,
-        quantifier = AllPaths, costVarDef = None, isObj = true)
+        quantifier = AllPaths, costVarDef = None, isObj = true, pathExpression = None)
     val relationInConn = PatternsToRelations rewriteTree pathInConn
 
     relationOutConn should matchPattern {

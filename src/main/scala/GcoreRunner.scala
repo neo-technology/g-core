@@ -29,7 +29,7 @@ object GcoreRunner {
     gcoreRunner.compiler.compile(
       """
         | CONSTRUCT (v)
-        | MATCH (v)-/p <:knows>/->(w)
+        | MATCH (v)-/p <:knows*>/->(w)
       """.stripMargin)
   }
 }
