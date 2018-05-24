@@ -1,76 +1,63 @@
 package spark.graphx
 
-import algebra.operators.Column.{FROM_ID_COL, ID_COL, TO_ID_COL}
-import org.apache.spark.graphx.{Edge, Graph}
-import org.apache.spark.graphx.{lib => graphxlib}
-import org.apache.spark.graphx.lib.ShortestPaths.SPMap
+import algebra.operators.Column.{EDGE_SEQ_COL, FROM_ID_COL, ID_COL, TO_ID_COL}
+import org.apache.spark.graphx.{Edge, Graph, VertexId}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.functions.{col, explode}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.sql.functions.{col, explode, struct}
+import spark.graphx.ShortestPaths.{EdgeId, VertexInfoMap}
 
 object Utils {
   private def COST_COL: String = "path_cost"
-  private def SP_DISTS_COL: String = "sp_distances"
-  private def NESTED_ATTRS_COL: String = "nested_attrs"
-
-  def createPathData(edgeData: DataFrame, fromData: DataFrame, toData: DataFrame,
-                     sparkSession: SparkSession): DataFrame = {
-    val graph: Graph[Row, Row] =
-      convertToGraphX(
-        fromData.select(col(ID_COL.columnName)).union(toData.select(col(ID_COL.columnName))),
-        edgeData.select(
-          col(ID_COL.columnName), col(FROM_ID_COL.columnName), col(TO_ID_COL.columnName)))
-
-    // We need the set of landmarks as a sequence of longs.
-    // TODO: Can we avoid collect here?
-    val landmarks: Array[Long] =
-    toData
-      .select(col(ID_COL.columnName).cast("long"))
-      .collect
-      .map(_.getLong(0))
-
-    // SPMap = Map[reachable VertexId, cost]
-    val graphWithShortestPaths: Graph[SPMap, Row] = run(graph, landmarks)
-
-    convertToPathTable(sparkSession, graphWithShortestPaths)
-  }
+  private def SP_INFO_COL: String = "sp_info"
 
   /**
     * The attributes of vertices and edges are of type Row. => VD = Row, ED = Row
     */
-  private def convertToGraphX(vertexDf: DataFrame, edgeDf: DataFrame): Graph[Row, Row] = {
-    val vertexRDD: RDD[(Long, Row)] =
-      vertexDf
-        .select(col(ID_COL.columnName).cast("long"), struct("*").as(NESTED_ATTRS_COL))
+  def createPathData(edgeData: DataFrame, fromData: DataFrame, toData: DataFrame,
+                     sparkSession: SparkSession): DataFrame = {
+    val vertexRDD: RDD[(VertexId, VertexId)] =
+      fromData
+        .select(col(ID_COL.columnName)).union(toData.select(col(ID_COL.columnName)))
+        .select(col(ID_COL.columnName).cast("long"))
         .rdd
-        .map { case Row(id: Long, attributes: Row) => (id, attributes) }
-    val edgeRDD: RDD[Edge[Row]] =
-      edgeDf
+        .map { case Row(id: VertexId) => (id, id) }
+    val edgeRDD: RDD[Edge[EdgeId]] =
+      edgeData
         .select(
+          col(ID_COL.columnName).cast("long"),
           col(FROM_ID_COL.columnName).cast("long"),
-          col(TO_ID_COL.columnName).cast("long"),
-          struct("*").as(NESTED_ATTRS_COL))
+          col(TO_ID_COL.columnName).cast("long"))
         .rdd
         .map {
-          case Row(fromId: Long, toId: Long, attributes: Row) => Edge(fromId, toId, attributes)
+          case Row(edgeId: Long, fromId: Long, toId: Long) => Edge(fromId, toId, edgeId)
         }
+    val graph: Graph[Long, EdgeId] = Graph(vertexRDD, edgeRDD)
 
-    Graph(vertexRDD, edgeRDD)
-  }
+    // TODO: Can we avoid collect here?
+    val landmarks: Array[Long] =
+      toData
+        .select(col(ID_COL.columnName).cast("long"))
+        .collect
+        .map(_.getLong(0))
 
-  private def convertToPathTable(sparkSession: SparkSession,
-                                 graphShortestPaths: Graph[SPMap, Row]): DataFrame = {
+    val graphWithShortestPaths: Graph[VertexInfoMap, EdgeId] = ShortestPaths.run(graph, landmarks)
+
     sparkSession
-      .createDataFrame(graphShortestPaths.mapVertices((_, spMap) => spMap.toSeq).vertices)
-      .toDF(FROM_ID_COL.columnName, SP_DISTS_COL)
-      .select(col(FROM_ID_COL.columnName), explode(col(SP_DISTS_COL)).as(SP_DISTS_COL))
+      .createDataFrame(
+        graphWithShortestPaths
+          .mapVertices((_, vertexInfoMap) =>
+            vertexInfoMap.toSeq.map {
+              case (vertexId, (distance, edgeSeq)) => vertexId -> (distance, edgeSeq.reverse)
+            })
+          .vertices)
+      .toDF(FROM_ID_COL.columnName, SP_INFO_COL)
+      .select(col(FROM_ID_COL.columnName), explode(col(SP_INFO_COL)).as(SP_INFO_COL))
       .select(
         col(FROM_ID_COL.columnName),
-        col(s"$SP_DISTS_COL._1").as(TO_ID_COL.columnName),
-        col(s"$SP_DISTS_COL._2").as(COST_COL))
+        col(s"$SP_INFO_COL._1").as(TO_ID_COL.columnName),
+        col(s"$SP_INFO_COL._2._1").as(COST_COL),
+        col(s"$SP_INFO_COL._2._2").as(EDGE_SEQ_COL.columnName))
       .where(s"$COST_COL > 0")
   }
-
-  private def run(graph: Graph[Row, Row], landmarks: Seq[Long]): Graph[SPMap, Row] =
-    graphxlib.ShortestPaths.run(graph, landmarks)
 }

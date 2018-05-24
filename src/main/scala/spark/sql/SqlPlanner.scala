@@ -44,7 +44,6 @@ case class SqlPlanner(compileContext: CompileContext) extends TargetPlanner {
   override def solveBindingTable(matchClause: AlgebraTreeNode): DataFrame = {
     val matchData: DataFrame = rewriteAndSolveBtableOps(matchClause)
     matchData.show(false)
-    matchData.explain()
     matchData.cache()
   }
 
