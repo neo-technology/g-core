@@ -15,6 +15,7 @@ case class PathsGraph(spark: SparkSession) extends SparkGraph {
   val E = Blue(4, "E")
   val F = Blue(5, "F")
   val G = Blue(6, "G")
+  val H = Blue(7, "H")
 
   val AB = Knows(10, 0, 1)
   val AE = Knows(11, 0, 4)
@@ -37,7 +38,7 @@ case class PathsGraph(spark: SparkSession) extends SparkGraph {
   override def vertexData: Seq[Table[DataFrame]] = Seq(
     Table(
       name = Label("Blue"),
-      data = Seq(A, B, C, D, E, F, G).toDF)
+      data = Seq(A, B, C, D, E, F, G, H).toDF)
   )
 
   override def edgeData: Seq[Table[DataFrame]] = Seq(
