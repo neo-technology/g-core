@@ -65,6 +65,11 @@ case class StoredPathRelation(ref: Reference,
   children = List(ref, labelRelation, expr, fromRel, toRel)
 }
 
+/**
+  * The logical table that contains data for a virtual path (a path that we need to discover in the
+  * graph). It is essentially a wrapper over the G-CORE-specific [[Path]] with parameter
+  * [[Path.isObj]] = true, such that we can use the entity in the relational tree.
+  */
 case class VirtualPathRelation(ref: Reference,
                                isReachableTest: Boolean,
                                fromRel: VertexRelation,

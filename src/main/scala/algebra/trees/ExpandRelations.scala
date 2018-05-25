@@ -25,10 +25,11 @@ import scala.collection.mutable
   * operations.
   *
   * Label inference relies on previous rewrite phases, where entity relations
-  * ([[VertexRelation]], [[EdgeRelation]], [[StoredPathRelation]]) have been either labeled with a
-  * fixed label ([[Relation]]), if this was provided in the query, or with the label
-  * [[AllRelations]], which means that at that point in the rewrite pipeline, we could only infer
-  * that the data for the respective variable is to be queried in all available tables for its type.
+  * ([[VertexRelation]], [[EdgeRelation]], [[StoredPathRelation]], [[VirtualPathRelation]]) have
+  * been either labeled with a fixed label ([[Relation]]), if this was provided in the query, or
+  * with the label [[AllRelations]], which means that at that point in the rewrite pipeline, we
+  * could only infer that the data for the respective variable is to be queried in all available
+  * tables for its type.
   *
   * During the inference process, each [[Connection]] in a [[GraphPattern]] becomes a
   * [[SimpleMatchRelation]]. At the end of the inference process:
@@ -133,6 +134,14 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
       })
   }
 
+  /**
+    * Given a:
+    *   - sequence of [[SimpleMatchRelation]]s
+    *   - a mapping from each [[SimpleMatchRelation]] to a sequence of [[LabelTuple]]s,
+    *
+    * emit for each [[SimpleMatchRelation]] as many equivalent relations as there are label tuples
+    * mapped to it.
+    */
   private def constrainSimpleMatches(simpleMatches: Seq[AlgebraTreeNode],
                                      constrainedLabels: BindingToLabelsMmap,
                                      catalog: Catalog): Seq[SimpleMatchRelation] = {
@@ -140,53 +149,79 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
       restrictLabelsPerMatch(simpleMatches, constrainedLabels, catalog)
 
     simpleMatches.flatMap {
-      case m @ SimpleMatchRelation(rel @ VertexRelation(_, _, _), _, _) =>
+      case m @ SimpleMatchRelation(rel: VertexRelation, _, _) =>
         constrainedPerMatch(m).collect {
-          case tuple @ VertexTuple(label) =>
-            m.copy(relation = rel.copy(labelRelation = Relation(label)))
+          case VertexTuple(label) => m.copy(relation = rel.copy(labelRelation = Relation(label)))
+          case other =>
+            throw new IllegalArgumentException(
+              s"A match relation of vertex should not be mapped to $other")
         }
-      case m @ SimpleMatchRelation(rel @ EdgeRelation(_, _, _, fromRel, toRel), _, _) =>
-        constrainedPerMatch(m).collect {
-          case EdgeOrPathTuple(label, fromLabel, toLabel) =>
-            m.copy(
-              relation = rel.copy(
-                labelRelation = Relation(label),
-                fromRel = fromRel.copy(labelRelation = Relation(fromLabel)),
-                toRel = toRel.copy(labelRelation = Relation(toLabel))))
-        }
-      case m @ SimpleMatchRelation(
-      rel @ StoredPathRelation(_, _, _, _, fromRel, toRel, _, _), _, _) =>
+      case m @ SimpleMatchRelation(rel: EdgeRelation, _, _) =>
         constrainedPerMatch(m).collect {
           case EdgeOrPathTuple(label, fromLabel, toLabel) =>
             m.copy(
               relation = rel.copy(
                 labelRelation = Relation(label),
-                fromRel = fromRel.copy(labelRelation = Relation(fromLabel)),
-                toRel = toRel.copy(labelRelation = Relation(toLabel))))
+                fromRel = rel.fromRel.copy(labelRelation = Relation(fromLabel)),
+                toRel = rel.toRel.copy(labelRelation = Relation(toLabel))))
+          case other =>
+            throw new IllegalArgumentException(
+              s"A match relation of edge should not be mapped to $other")
         }
-      case m @ SimpleMatchRelation(rel @ VirtualPathRelation(_, _, fromRel, toRel, _, _), _, _) =>
+      case m @ SimpleMatchRelation(rel: StoredPathRelation, _, _) =>
+        constrainedPerMatch(m).collect {
+          case EdgeOrPathTuple(label, fromLabel, toLabel) =>
+            m.copy(
+              relation = rel.copy(
+                labelRelation = Relation(label),
+                fromRel = rel.fromRel.copy(labelRelation = Relation(fromLabel)),
+                toRel = rel.toRel.copy(labelRelation = Relation(toLabel))))
+          case other =>
+            throw new IllegalArgumentException(
+              s"A match relation of stored path should not be mapped to $other")
+        }
+      case m @ SimpleMatchRelation(rel: VirtualPathRelation, _, _) =>
         constrainedPerMatch(m).collect {
           case VirtualPathTuple(fromLabel, toLabel) =>
             m.copy(
               relation = rel.copy(
-                fromRel = fromRel.copy(labelRelation = Relation(fromLabel)),
-                toRel = toRel.copy(labelRelation = Relation(toLabel))))
+                fromRel = rel.fromRel.copy(labelRelation = Relation(fromLabel)),
+                toRel = rel.toRel.copy(labelRelation = Relation(toLabel))))
+          case other =>
+            throw new IllegalArgumentException(
+              s"A match relation of virtual path should not be mapped to $other")
         }
     }
   }
 
+  /**
+    * Given a:
+    *   - sequence of [[SimpleMatchRelation]]s
+    *   - a mapping between each [[Reference]] that appears in those relations and a set of labels
+    *   that can be applied to that [[Reference]],
+    *
+    * create a multi-mapping between each [[SimpleMatchRelation]] in the sequence and the
+    * [[LabelTuple]]s that can be applied to the entire relation.
+    *
+    * For example, if we had the following reference-to-label mapping:
+    *   a -> [A1, A2]
+    *   b -> [B1, B2]
+    *   e -> [E1, E2], where E1 can only occur between A1-B1 and E2 only between A2-B2,
+    *
+    * then we would map the relation (a)-[e]->(b) to: (A1, E1, B1), (A2, E2, B2).
+    */
   private def restrictLabelsPerMatch(relations: Seq[AlgebraTreeNode],
                                      constrainedLabels: BindingToLabelsMmap,
                                      catalog: Catalog): MatchToBindingTuplesMmap = {
     val matchToBindingTuplesMmap: MatchToBindingTuplesMmap = newMatchToBindingsMmap
     relations.foreach {
-      case relation @ SimpleMatchRelation(VertexRelation(ref, _, _), _, _) =>
-        constrainedLabels(ref).foreach(
+      case relation @ SimpleMatchRelation(vertex: VertexRelation, _, _) =>
+        constrainedLabels(vertex.ref).foreach(
           label => matchToBindingTuplesMmap.addBinding(relation, VertexTuple(label)))
 
-      case relation @ SimpleMatchRelation(EdgeRelation(edgeRef, _, _, _, _), matchContext, _) =>
+      case relation @ SimpleMatchRelation(edge: EdgeRelation, matchContext, _) =>
         val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
-        val constrainedEdgeLabels: Seq[Label] = constrainedLabels(edgeRef).toSeq
+        val constrainedEdgeLabels: Seq[Label] = constrainedLabels(edge.ref).toSeq
         graphSchema.edgeRestrictions.map
           .filter { case (edgeLabel, _) => constrainedEdgeLabels.contains(edgeLabel) }
           .foreach {
@@ -195,10 +230,9 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
                 relation, EdgeOrPathTuple(edgeLabel, fromLabel, toLabel))
           }
 
-      case relation @ SimpleMatchRelation(
-      StoredPathRelation(pathRef, _, _, _, _, _, _, _), matchContext, _) =>
+      case relation @ SimpleMatchRelation(path: StoredPathRelation, matchContext, _) =>
         val graphSchema: GraphSchema = extractGraphSchema(matchContext, catalog)
-        val constrainedPathLabels: Seq[Label] = constrainedLabels(pathRef).toSeq
+        val constrainedPathLabels: Seq[Label] = constrainedLabels(path.ref).toSeq
         graphSchema.storedPathRestrictions.map
           .filter { case (pathLabel, _) => constrainedPathLabels.contains(pathLabel) }
           .foreach {
@@ -207,9 +241,9 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
                 relation, EdgeOrPathTuple(pathLabel, fromLabel, toLabel))
           }
 
-      case relation @ SimpleMatchRelation(VirtualPathRelation(_, _, fromRel, toRel, _, _), _, _) =>
-        val fromLabels: Seq[Label] = constrainedLabels(fromRel.ref).toSeq
-        val toLabels: Seq[Label] = constrainedLabels(toRel.ref).toSeq
+      case relation @ SimpleMatchRelation(path: VirtualPathRelation, _, _) =>
+        val fromLabels: Seq[Label] = constrainedLabels(path.fromRel.ref).toSeq
+        val toLabels: Seq[Label] = constrainedLabels(path.toRel.ref).toSeq
         val labelsCrossProd: Seq[(Label, Label)] =
           for { fromLabel <- fromLabels; toLabel <- toLabels } yield (fromLabel, toLabel)
         labelsCrossProd.foreach {
@@ -221,6 +255,11 @@ case class ExpandRelations(context: AlgebraContext) extends TopDownRewriter[Alge
     matchToBindingTuplesMmap
   }
 
+  /**
+    * Given a sequence of [[SimpleMatchRelation]]s, creates a multi-mapping between each
+    * [[Reference]] that appears in the sequence of relations and labels that can be applied to
+    * that [[Reference]], in the overall context of the relations.
+    */
   private def restrictLabelsOverall(relations: Seq[SimpleMatchRelation],
                                     catalog: Catalog): BindingToLabelsMmap = {
     val initialRestrictedBindings: BindingToLabelsMmap = newBindingToLabelsMmap

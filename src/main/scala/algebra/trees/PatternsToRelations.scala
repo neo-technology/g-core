@@ -8,7 +8,8 @@ import common.trees.BottomUpRewriter
 
 /**
   * A rewriting phase that creates [[VertexRelation]]s from [[Vertex]] nodes, [[EdgeRelation]]s from
-  * [[Edge]] nodes and [[StoredPathRelation]]s from [[Path]] nodes with [[Path.isObj]] set to true.
+  * [[Edge]] nodes, [[StoredPathRelation]]s from [[Path]] nodes with [[Path.isObj]] set to true and
+  * [[VirtualPathRelation]]s from [[Path]] nodes with [[Path.isObj]] set to false.
   */
 object PatternsToRelations extends BottomUpRewriter[AlgebraTreeNode] {
 

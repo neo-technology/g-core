@@ -54,15 +54,16 @@ case class GraphPattern(topology: Seq[Connection]) extends AlgebraType {
   children = topology
 }
 
-/** Type of path to query for. */
+/******************************** Type of path to query for. **************************************/
 abstract class PathQuantifier extends AlgebraType
 case class Shortest(qty: Integer, isDistinct: Boolean) extends PathQuantifier {
 
   override def toString: String = s"$name [$qty, isDistinct = $isDistinct]"
 }
 case object AllPaths extends PathQuantifier
+/**************************************************************************************************/
 
-/** Path expression. **/
+/********************************** Path expression. **********************************************/
 abstract class PathExpression extends AlgebraType
 
 case class KleeneStar(labels: DisjunctLabels, lowerBound: Int, upperBound: Int)
@@ -99,8 +100,9 @@ case class KleeneConcatenation(lhs: PathExpression, rhs: PathExpression)
 case class MacroNameReference(reference: Reference) extends PathExpression {
   children = List(reference)
 }
+/**************************************************************************************************/
 
-/** Abstract connections in graph. */
+/******************************* Abstract connections in graph. ***********************************/
 abstract class Connection(ref: Reference, expr: ObjectPattern) extends AlgebraType
   with SemanticCheckWithContext {
 
@@ -163,7 +165,9 @@ abstract class DoubleEndpointConn(connName: Reference,
       throw UnsupportedOperation(s"Connection type $connType unsupported.")
   }
 }
+/**************************************************************************************************/
 
+/********************************* Concrete connections in graph **********************************/
 case class Vertex(vertexRef: Reference, expr: ObjectPattern)
   extends SingleEndpointConn(vertexRef, expr) {
 

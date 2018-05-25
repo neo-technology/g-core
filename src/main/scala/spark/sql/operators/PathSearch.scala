@@ -14,6 +14,10 @@ import spark.graphx.Utils.createPathData
 import spark.sql.SqlQuery
 import spark.sql.SqlQuery.{mergeSchemas, refactorScanSchema, selectAllPrependRef}
 
+/**
+  * Creates a table that will store information about shortest paths discovered in the graph between
+  * two given vertex types.
+  */
 case class PathSearch(pathRelation: VirtualPathRelation,
                       graph: Graph,
                       catalog: Catalog,
