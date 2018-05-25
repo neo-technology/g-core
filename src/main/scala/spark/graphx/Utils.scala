@@ -8,8 +8,8 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import spark.graphx.ShortestPaths.{EdgeId, VertexInfoMap}
 
 object Utils {
-  private def COST_COL: String = "path_cost"
-  private def SP_INFO_COL: String = "sp_info"
+  def COST_COL: String = "path_cost"
+  def SP_INFO_COL: String = "sp_info"
 
   /**
     * Creates a [[DataFrame]] containing shortest path information for all shortest paths between
@@ -17,9 +17,6 @@ object Utils {
     * all the columns of the source vertex, all the columns of a reachable destination vertex, one
     * column storing the path cost (aliased [[COST_COL]]) and one column storing the edge sequence
     * along the path (aliased [[EDGE_SEQ_COL]]).
-    *
-    * Note that the ids of the source and destination vertices must be unique for the shortest path
-    * algorithm to return correct results.
     */
   def createPathData(edgeData: DataFrame, fromData: DataFrame, toData: DataFrame,
                      sparkSession: SparkSession): DataFrame = {
